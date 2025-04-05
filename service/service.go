@@ -20,6 +20,7 @@ type ExportMcpService interface {
 	GetMessageUrl() string
 	GetStatus() string
 	SendMessage(message string) error
+	Info() McpServiceInfo
 }
 
 // McpService 表示一个运行中的服务实例
@@ -125,7 +126,6 @@ func (s *McpService) Start(logger echo.Logger) error {
 	if s.IsSSE() {
 		return fmt.Errorf("服务 %s 不是命令类型, 无需启动", s.Name)
 	}
-	logger.Infof("Assigned port: %d", s.Port)
 	if s.Status == "running" {
 		return fmt.Errorf("服务 %s 已运行", s.Name)
 	}
@@ -133,6 +133,7 @@ func (s *McpService) Start(logger echo.Logger) error {
 	if s.Port == 0 {
 		s.Port = s.portMgr.getNextAvailablePort()
 	}
+	logger.Infof("Assigned port: %d", s.Port)
 	// 创建日志文件
 	logFile, err := xlog.CreateLogFile(s.cfg.ConfigDirPath, s.Name+".log")
 	if err != nil {
@@ -198,13 +199,14 @@ func (s *McpService) monitorProcess() {
 		default:
 			if err := s.Cmd.Wait(); err != nil {
 				s.logger.Infof("Process %s exited with error: %v, restarting...", s.Name, err)
-				s.Start(s.logger)
-				s.RetryCount++
 				if s.RetryCount > s.cfg.McpServiceMgrConfig.GetMcpServiceRetryCount() {
 					s.logger.Infof("Process %s exited with error: %v, retry count exceeded, giving up", s.Name, err)
-					s.Status = "stopped"
-					s.RetryCount = 0
+					s.Stop(s.logger)
+					return
 				}
+				s.RetryCount++
+				s.Stop(s.logger)
+				s.Start(s.logger)
 			}
 		}
 	}
@@ -291,4 +293,18 @@ func (s *McpService) SendMessage(message string) error {
 	}
 
 	return nil
+}
+
+type McpServiceInfo struct {
+	Name   string
+	Status string
+	Config config.MCPServerConfig
+}
+
+func (s *McpService) Info() McpServiceInfo {
+	return McpServiceInfo{
+		Name:   s.Name,
+		Status: s.Status,
+		Config: s.Config,
+	}
 }

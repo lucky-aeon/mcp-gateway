@@ -287,11 +287,13 @@ func main() {
 	e.Use(middleware.Recover())
 
 	// 注册路由
-	e.POST("/deploy", manager.handleDeploy)
-	e.Any("/*", proxyHandler())
+	e.POST("/deploy", manager.handleDeploy)          // 部署服务
+	e.GET("/sse", manager.handleGlobalSSE)           // 全局SSE WIP
+	e.POST("/message", manager.handleGlobalMessage)  // 全局消息 WIP
+	e.GET("/services", manager.handleGetAllServices) // 获取所有服务
 
-	e.GET("/sse", manager.handleGlobalSSE)
-	e.POST("/message", manager.handleGlobalMessage)
+	// 代理
+	e.Any("/*", proxyHandler())
 
 	// 启动服务器
 	e.Logger.Fatal(e.Start(":8080"))
@@ -360,4 +362,15 @@ func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
 	}
 
 	return nil
+}
+
+// GET ALL MCP SERVICES
+func (m *ServerManager) handleGetAllServices(c echo.Context) error {
+	c.Logger().Infof("Get all services")
+	mcpServices := m.mcpServiceMgr.GetMcpServices(c.Logger())
+	var serviceInfos []service.McpServiceInfo
+	for _, instance := range mcpServices {
+		serviceInfos = append(serviceInfos, instance.Info())
+	}
+	return c.JSON(http.StatusOK, serviceInfos)
 }
