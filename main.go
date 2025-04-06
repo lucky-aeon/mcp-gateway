@@ -15,6 +15,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/config"
+	"github.com/lucky-aeon/agentx/plugin-helper/middleware_impl"
 	"github.com/lucky-aeon/agentx/plugin-helper/service"
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
@@ -285,6 +286,7 @@ func main() {
 	// 添加中间件
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	e.Use(middleware.KeyAuthWithConfig(middleware_impl.NewAuthMiddleware(&cfg).GetKeyAuthConfig())) // API Key 鉴权
 
 	// 注册路由
 	e.POST("/deploy", manager.handleDeploy)          // 部署服务
