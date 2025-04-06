@@ -185,6 +185,11 @@ func (s *McpService) Restart(logger echo.Logger) {
 	s.Start(logger)
 }
 
+// setConfig 设置配置, 下次启动时生效
+func (s *McpService) setConfig(cfg config.MCPServerConfig) {
+	s.Config = cfg
+}
+
 // monitorProcess 监控进程
 func (s *McpService) monitorProcess() {
 	if s.IsSSE() {

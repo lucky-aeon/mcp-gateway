@@ -107,6 +107,16 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
 }
 
+// handleDeleteMcpService 删除单个服务
+func (m *ServerManager) handleDeleteMcpService(c echo.Context) error {
+	c.Logger().Infof("Delete request: %v", c.Request().Body)
+	name := c.QueryParam("name")
+	if err := m.mcpServiceMgr.DeleteServer(c.Logger(), name); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
+}
+
 // proxyHandler 返回代理处理函数
 func proxyHandler() echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -293,10 +303,11 @@ func main() {
 	e.Use(middleware.KeyAuthWithConfig(middleware_impl.NewAuthMiddleware(cfg).GetKeyAuthConfig())) // API Key 鉴权
 
 	// 注册路由
-	e.POST("/deploy", manager.handleDeploy)          // 部署服务
-	e.GET("/sse", manager.handleGlobalSSE)           // 全局SSE WIP
-	e.POST("/message", manager.handleGlobalMessage)  // 全局消息 WIP
-	e.GET("/services", manager.handleGetAllServices) // 获取所有服务
+	e.POST("/deploy", manager.handleDeploy)             // 部署服务
+	e.DELETE("/delete", manager.handleDeleteMcpService) // 删除服务
+	e.GET("/sse", manager.handleGlobalSSE)              // 全局SSE WIP
+	e.POST("/message", manager.handleGlobalMessage)     // 全局消息 WIP
+	e.GET("/services", manager.handleGetAllServices)    // 获取所有服务
 
 	// 代理
 	e.Any("/*", proxyHandler())

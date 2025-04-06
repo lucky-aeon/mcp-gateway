@@ -21,6 +21,7 @@ type ServiceManagerI interface {
 	CreateProxySession() *Session
 	GetProxySession(id string) (*Session, bool)
 	CloseProxySession(id string)
+	DeleteServer(logger echo.Logger, name string) error
 }
 
 type PortManagerI interface {
@@ -62,13 +63,26 @@ func NewServiceManager(cfg config.Config) *ServiceManager {
 	return mgr
 }
 
+func (m *ServiceManager) DeleteServer(logger echo.Logger, name string) error {
+	m.Lock()
+	defer m.Unlock()
+	if mcpService, exists := m.servers[name]; exists {
+		mcpService.Stop(logger)
+		delete(m.servers, name)
+	} else {
+		return fmt.Errorf("服务 %s 不存在", name)
+	}
+	m.saveConfig()
+	return nil
+}
+
 func (m *ServiceManager) DeployServer(logger echo.Logger, name string, config config.MCPServerConfig) error {
 	m.Lock()
 	defer m.Unlock()
 
 	if mcpService, exists := m.servers[name]; exists {
-		logger.Errorf("服务 %s 已存在", name)
-
+		logger.Infof("服务 %s 已存在, 重新配置: %v", name, config)
+		mcpService.setConfig(config)
 		// 重启服务
 		mcpService.Restart(logger)
 		return nil
@@ -206,27 +220,23 @@ func (m *ServiceManager) GetProxySession(id string) (*Session, bool) {
 // GC长时间未使用的Session
 func (m *ServiceManager) loopGC() {
 	tick := time.NewTicker(m.cfg.SessionGCInterval)
-	for {
-		select {
-		case _, ok := <-tick.C:
-			if !ok {
-				return
-			}
-			m.RLock()
-			// GC MCP services sessions
-			for _, instance := range m.servers {
-				instance.GC()
-			}
+	defer tick.Stop()
 
-			// GC proxy sessions
-			m.proxySessionsMutex.Lock()
-			for id, session := range m.proxySessions {
-				if time.Since(session.LastReceiveTime) > 5*m.cfg.SessionGCInterval {
-					delete(m.proxySessions, id)
-				}
-			}
-			m.proxySessionsMutex.Unlock()
-			m.RUnlock()
+	for range tick.C {
+		m.RLock()
+		// GC MCP services sessions
+		for _, instance := range m.servers {
+			instance.GC()
 		}
+
+		// GC proxy sessions
+		m.proxySessionsMutex.Lock()
+		for id, session := range m.proxySessions {
+			if time.Since(session.LastReceiveTime) > 5*m.cfg.SessionGCInterval {
+				delete(m.proxySessions, id)
+			}
+		}
+		m.proxySessionsMutex.Unlock()
+		m.RUnlock()
 	}
 }
