@@ -17,7 +17,13 @@ https://github.com/supercorp-ai/supergateway
 
 ## Installation
 
-build docker image
+1. pull github package
+
+```bash
+docker pull ghcr.io/lucky-aeon/mcp-gateway:latest
+```
+
+2. self build docker image
 
 ```bash
 docker build -t mcp-gateway .
@@ -25,7 +31,13 @@ docker build -t mcp-gateway .
 
 ## Usage
 
-run docker container
+run github docker container
+
+```bash
+docker run -d --name mcp-gateway -p 8080:8080 ghcr.io/lucky-aeon/mcp-gateway
+```
+
+run self build docker container
 
 ```bash
 docker run -d --name mcp-gateway -p 8080:8080 mcp-gateway
