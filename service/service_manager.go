@@ -41,7 +41,7 @@ type ServiceManager struct {
 
 	// proxy sessions
 	proxySessionsMutex sync.RWMutex
-	proxySessions     map[string]*Session
+	proxySessions      map[string]*Session
 
 	cfg config.Config
 }
@@ -217,7 +217,7 @@ func (m *ServiceManager) loopGC() {
 			for _, instance := range m.servers {
 				instance.GC()
 			}
-			
+
 			// GC proxy sessions
 			m.proxySessionsMutex.Lock()
 			for id, session := range m.proxySessions {

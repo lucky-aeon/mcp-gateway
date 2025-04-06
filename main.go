@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -41,8 +44,6 @@ func initServerManager(cfg config.Config) *ServerManager {
 		cfg:           cfg,
 	}
 }
-
-// loadConfig 加载已保存的配置
 func (m *ServerManager) loadConfig() error {
 	data, err := os.ReadFile(m.cfg.GetMcpConfigPath())
 	if os.IsNotExist(err) {
@@ -261,13 +262,16 @@ func main() {
 	if _, err := os.Stat(cfgDir); os.IsNotExist(err) {
 		cfgDir = "."
 	}
-	cfg := config.Config{
-		SessionGCInterval: 5 * time.Minute,
-		ConfigDirPath:     cfgDir,
+	cfg, err := config.InitConfig(cfgDir)
+	if err != nil {
+		panic(fmt.Errorf("failed to init config: %w", err))
 	}
+	defer func() {
+		cfg.SaveConfig()
+	}()
 
 	// 初始化服务管理器
-	manager = initServerManager(cfg)
+	manager = initServerManager(*cfg)
 	if err := manager.loadConfig(); err != nil {
 		panic(fmt.Errorf("failed to load config: %w", err))
 	}
@@ -286,7 +290,7 @@ func main() {
 	// 添加中间件
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-	e.Use(middleware.KeyAuthWithConfig(middleware_impl.NewAuthMiddleware(&cfg).GetKeyAuthConfig())) // API Key 鉴权
+	e.Use(middleware.KeyAuthWithConfig(middleware_impl.NewAuthMiddleware(cfg).GetKeyAuthConfig())) // API Key 鉴权
 
 	// 注册路由
 	e.POST("/deploy", manager.handleDeploy)          // 部署服务
@@ -297,8 +301,26 @@ func main() {
 	// 代理
 	e.Any("/*", proxyHandler())
 
-	// 启动服务器
-	e.Logger.Fatal(e.Start(":8080"))
+	// 设置优雅退出
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	// 启动服务器（非阻塞）
+	go func() {
+		if err := e.Start(cfg.Bind); err != nil && err != http.ErrServerClosed {
+			e.Logger.Fatal("shutting down the server")
+		}
+	}()
+
+	// 等待退出信号
+	<-quit
+
+	// 优雅关闭
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := e.Shutdown(ctx); err != nil {
+		e.Logger.Fatal(err)
+	}
 }
 
 // 全局SSE，这里返回所有MCP服务的SSE事件
