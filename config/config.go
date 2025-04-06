@@ -16,6 +16,8 @@ type Config struct {
 	Auth                *AuthConfig   // 认证配置
 	SessionGCInterval   time.Duration // Session GC间隔
 	McpServiceMgrConfig McpServiceMgrConfig
+
+	CommandBase string // 命令基础路径, 目前由于依赖STDIO>SSE，因此需要 COMMAND_SUPERGATEWA
 }
 
 func InitConfig(cfgDir string) (cfg *Config, err error) {
@@ -55,6 +57,9 @@ func (c *Config) Default() {
 	}
 	if c.McpServiceMgrConfig.McpServiceRetryCount == 0 {
 		c.McpServiceMgrConfig.McpServiceRetryCount = 3
+	}
+	if c.CommandBase == "" {
+		c.CommandBase = COMMAND_SUPERGATEWA
 	}
 }
 
