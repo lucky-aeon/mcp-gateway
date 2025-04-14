@@ -185,36 +185,50 @@ func (m *ServiceManager) GetMcpServices(logger xlog.Logger) map[string]ExportMcp
 // CreateProxySession 创建一个新的代理会话
 func (m *ServiceManager) CreateProxySession(xl xlog.Logger) *Session {
 	xl.Infof("Creating new proxy session")
-	m.proxySessionsMutex.Lock()
-	defer m.proxySessionsMutex.Unlock()
-
 	xl.Infof("Creating new session")
 	session := NewSession(uuid.New().String())
-	m.proxySessions[session.Id] = session
-
 	xl.Infof("Subscribing to all MCP services")
 	// 订阅所有MCP服务的SSE事件
 	m.RLock()
+
 	for name, instance := range m.servers {
 		xl.Infof("Subscribing to MCP service: %s", name)
-		session.SubscribeSSE(name, instance.GetSSEUrl())
+
+		maxRetries := 2
+		retryDelay := time.Second
+
+		for i := 0; i <= maxRetries; i++ {
+			if instance.GetStatus() == Running {
+				session.SubscribeSSE(name, instance.GetSSEUrl())
+				break
+			}
+
+			if i < maxRetries {
+				xl.Infof("Service[%s] %s not running, retrying (%d/%d)...", instance.GetStatus(), name, i+1, maxRetries)
+				time.Sleep(retryDelay)
+			} else {
+				xl.Warnf("Service %s still not running after %d retries, skipping", name, maxRetries)
+			}
+		}
 	}
 	m.RUnlock()
 
 	xl.Infof("Proxy session created: %s", session.Id)
+	m.proxySessionsMutex.Lock()
+	defer m.proxySessionsMutex.Unlock()
+	m.proxySessions[session.Id] = session
 	return session
 }
 
 // CloseProxySession 关闭代理会话
 func (m *ServiceManager) CloseProxySession(xl xlog.Logger, id string) {
 	xl.Infof("Closing proxy session: %s", id)
-	m.proxySessionsMutex.Lock()
-	defer m.proxySessionsMutex.Unlock()
-
 	xl.Infof("Closing proxy session, has mutex: %s", id)
 	if session, exists := m.proxySessions[id]; exists {
 		session.Close()
 		xl.Infof("Closed proxy session: %s", id)
+		m.proxySessionsMutex.Lock()
+		defer m.proxySessionsMutex.Unlock()
 		delete(m.proxySessions, id)
 	}
 }
@@ -225,6 +239,9 @@ func (m *ServiceManager) GetProxySession(logger xlog.Logger, id string) (*Sessio
 	defer m.proxySessionsMutex.RUnlock()
 
 	session, exists := m.proxySessions[id]
+	if !exists {
+		return nil, false
+	}
 	return session, exists
 }
 
@@ -237,18 +254,20 @@ func (m *ServiceManager) loopGC() {
 	for range tick.C {
 		// GC proxy sessions
 		func() {
-			m.proxySessionsMutex.Lock()
-			defer m.proxySessionsMutex.Unlock()
 			now := time.Now()
 			xl.Infof("GC proxy sessions, last receive time: %s. timeout: %s", now, m.cfg.ProxySessionTimeout)
 			for id, session := range m.proxySessions {
 				if session == nil {
+					m.proxySessionsMutex.Lock()
+					defer m.proxySessionsMutex.Unlock()
 					delete(m.proxySessions, id)
 					continue
 				}
 				if now.Sub(session.LastReceiveTime) > m.cfg.ProxySessionTimeout {
 					xl.Infof("Closing proxy session: %s, last receive time: %s. timeout: %s", id, session.LastReceiveTime, m.cfg.ProxySessionTimeout)
 					session.Close()
+					m.proxySessionsMutex.Lock()
+					defer m.proxySessionsMutex.Unlock()
 					delete(m.proxySessions, id)
 					xl.Infof("Closed proxy session: %s", id)
 				}

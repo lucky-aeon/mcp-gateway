@@ -15,9 +15,8 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	querySessionId := c.QueryParam("sessionId")
 	if querySessionId == "" {
 		xl.Infof("No session ID provided, creating new session")
-		// 没有sessionId，生成一个返回出去
+		// 没有sessionId，生成一个返回出
 		// create proxy session
-		xl.Debugf("mcpServiceMgr: %+v", m.mcpServiceMgr)
 		session := m.mcpServiceMgr.CreateProxySession(xl)
 		xl.Infof("Created new session: %s", session.Id)
 		// 302重定向到 /sse?sessionId={session.Id}
@@ -39,8 +38,14 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 
 	// 返回endpoint事件
 	c.Response().WriteHeader(http.StatusOK)
-	fmt.Fprintf(c.Response(), "event: endpoint\ndata: /message?sessionId=%s\n\n", session.Id)
-	c.Response().Flush()
+	w := c.Response().Writer
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return c.String(http.StatusInternalServerError, "flusher not supported")
+	}
+
+	fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\r\n\r\n", session.Id)
+	flusher.Flush()
 
 	// 转发所有SSE事件
 	for {
@@ -51,12 +56,12 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 			xl.Infof("Client closed connection, sessionId: %s", querySessionId)
 			return nil
 		case event := <-session.GetEventChan():
-			xl.Infof("Event received: %v", event)
-			if _, err := fmt.Fprintf(c.Response(), "%s", event); err != nil {
-				xl.Errorf("Failed to write event: %v", err)
-				return err
-			}
-			c.Response().Flush()
+			xl.Infof("to sse: %v", event)
+			//ev := fmt.Sprintf("event: message", event.Data)
+			fmt.Fprintf(w, "event: %s\n", event.Event)
+			flusher.Flush()
+			fmt.Fprintf(w, "data: %s\n\n", event.Data)
+			flusher.Flush()
 		}
 	}
 }

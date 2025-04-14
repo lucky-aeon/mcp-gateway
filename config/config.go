@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const COMMAND_SUPERGATEWA = "/usr/local/bin/supergateway"
+const COMMAND_SUPERGATEWA = "supergateway"
 
 type Config struct {
 	LogLevel            uint8         // 日志级别
@@ -115,6 +115,14 @@ type MCPServerConfig struct {
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+}
+
+func (c *MCPServerConfig) GetEnvs() []string {
+	list := make([]string, 0, len(c.Env))
+	for s := range c.Env {
+		list = append(list, s)
+	}
+	return list
 }
 
 const CONFIG_PATH = "config.json"

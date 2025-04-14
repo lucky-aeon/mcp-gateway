@@ -22,7 +22,6 @@ func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
 	if !exists {
 		return c.String(http.StatusNotFound, "session not found")
 	}
-
 	// 读取请求体
 	body, err := io.ReadAll(c.Request().Body)
 	if err != nil {

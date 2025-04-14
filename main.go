@@ -33,6 +33,7 @@ func main() {
 		cfg.SaveConfig()
 	}()
 
+	xlog.SetHeader(xlog.DefaultHeader)
 	log.Infof("log level: %d", cfg.LogLevel)
 	log.SetLevel(log.Lvl(cfg.LogLevel))
 
@@ -69,7 +70,7 @@ func main() {
 	<-quit
 
 	// 优雅关闭
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	srvMgr.Close()
 	if err := e.Shutdown(ctx); err != nil {

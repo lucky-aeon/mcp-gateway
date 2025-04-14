@@ -3,6 +3,8 @@ package middleware_impl
 import (
 	"net/http"
 
+	"strings"
+
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/lucky-aeon/agentx/plugin-helper/config"
@@ -30,7 +32,8 @@ func (m *AuthMiddleware) GetKeyAuthConfig() middleware.KeyAuthConfig {
 
 func (m *AuthMiddleware) KeyAuthValidator(key string, c echo.Context) (bool, error) {
 	xl := xlog.WithEchoLogger(c.Logger())
-	xl.Infof("Auth key: %s, path: %s", key, c.Path())
+	realPath := c.Request().URL.Path
+	xl.Infof("Auth key: %s, path: %s", key, realPath)
 
 	if m.config.GetAuthConfig() == nil { // 如果没有配置，直接放行
 		xl.Infof("Auth config not found")
@@ -41,11 +44,18 @@ func (m *AuthMiddleware) KeyAuthValidator(key string, c echo.Context) (bool, err
 		return true, nil
 	}
 
-	switch c.Path() {
+	checkSession := false
+	switch realPath {
 	case "/sse", "/message":
+		checkSession = true
+	default:
+		if strings.Contains(realPath, "/message") {
+			checkSession = true
+		}
+	}
+
+	if checkSession {
 		// 检查session
-		xl.Infof("Checking session: %s", c.QueryParam("sessionId"))
-		xl.Infof("Checking session: %+v", c)
 		if c.QueryParam("sessionId") != "" { // 如果是session，直接放行
 			return true, nil
 		}
