@@ -8,9 +8,9 @@ The MCP gateway is a reverse proxy server that forwards requests from clients to
 
 - Deploy multiple MCP servers
 - Connect to MCP server
-- Use gateway to call MCP servers, WIP
-- Get all MCP servers' SSE streams, WIP
-- Get all MCP servers' tools, WIP
+- Use gateway to call MCP servers
+- Get all MCP servers' SSE streams
+- Get all MCP servers' tools
 
 > At present, STDIO turns to the supergateway used by SSE, and we will implement this function ourselves later
 https://github.com/supercorp-ai/supergateway
