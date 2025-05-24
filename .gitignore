@@ -2,3 +2,7 @@ logs
 vm
 .env
 config.json
+mcp_servers.json
+node_modules
+yarn.lock
+.vite
