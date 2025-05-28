@@ -79,20 +79,20 @@ func (m *ServiceManager) DeleteServer(logger xlog.Logger, name string) error {
 	return nil
 }
 
-func (m *ServiceManager) DeployServer(logger xlog.Logger, name string, config config.MCPServerConfig) error {
+func (m *ServiceManager) DeployServer(logger xlog.Logger, name string, mcpCfg config.MCPServerConfig) error {
 	m.Lock()
 	defer m.Unlock()
 
 	if mcpService, exists := m.servers[name]; exists {
-		logger.Infof("服务 %s 已存在, 重新配置: %v", name, config)
-		mcpService.setConfig(config)
+		logger.Infof("服务 %s 已存在, 重新配置: %v", name, mcpCfg)
+		mcpService.setConfig(mcpCfg)
 		// 重启服务
 		mcpService.Restart(logger)
 		return nil
 	}
 
 	// 创建服务实例
-	instance := NewMcpService(name, config, m, m.cfg)
+	instance := NewMcpService(name, mcpCfg, m)
 	if err := instance.Start(logger); err != nil {
 		logger.Errorf("Failed to start service %s: %v", name, err)
 		return err
