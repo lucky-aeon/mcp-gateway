@@ -109,21 +109,7 @@ func (c *Config) GetMcpConfigPath() string {
 	return filepath.Join(c.ConfigDirPath, MCP_CONFIG_PATH)
 }
 
-// MCPServerConfig 定义单个MCP服务器的配置
-type MCPServerConfig struct {
-	URL     string            `json:"url,omitempty"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-}
 
-func (c *MCPServerConfig) GetEnvs() []string {
-	list := make([]string, 0, len(c.Env))
-	for s := range c.Env {
-		list = append(list, s)
-	}
-	return list
-}
 
 const CONFIG_PATH = "config.json"
 

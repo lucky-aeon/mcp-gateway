@@ -42,7 +42,6 @@ type McpService struct {
 	Port    int         // 添加端口字段
 
 	portMgr PortManagerI
-	cfg     config.Config
 
 	// 状态
 	Status CmdStatus
@@ -50,17 +49,19 @@ type McpService struct {
 	// 重试次数
 	RetryCount int
 	RetryMax   int
+
+	// SessionMgr
+	
 }
 
 // NewMcpService 创建一个McpService实例
-func NewMcpService(name string, config config.MCPServerConfig, portMgr PortManagerI, cfg config.Config) *McpService {
+func NewMcpService(name string, cfg config.MCPServerConfig, portMgr PortManagerI) *McpService {
 	logger := xlog.NewLogger(fmt.Sprintf("[MCP-%s]", name))
 	return &McpService{
 		Name:     name,
-		Config:   config,
+		Config:   cfg,
 		Port:     0,
 		portMgr:  portMgr,
-		cfg:      cfg,
 		Status:   Stopped,
 		logger:   logger,
 		RetryMax: cfg.McpServiceMgrConfig.GetMcpServiceRetryCount(),
@@ -133,7 +134,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	}
 	logger.Infof("Assigned port: %d", s.Port)
 	// 创建日志文件
-	logFile, err := xlog.CreateLogFile(s.cfg.ConfigDirPath, s.Name+".log")
+	logFile, err := xlog.CreateLogFile(s.Config.LogConfig.Path, s.Name+".log")
 	if err != nil {
 		return fmt.Errorf("failed to create log file: %v", err)
 	}
@@ -223,8 +224,12 @@ func (s *McpService) Restart(logger xlog.Logger) {
 }
 
 // setConfig 设置配置, 下次启动时生效
-func (s *McpService) setConfig(cfg config.MCPServerConfig) {
+func (s *McpService) setConfig(cfg config.MCPServerConfig) error {
+	if s.Status != Stopped {
+		return fmt.Errorf("service %s is running, cannot set config", s.Name)
+	}
 	s.Config = cfg
+	return nil
 }
 
 // io.Writer
