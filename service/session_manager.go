@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -35,4 +36,18 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) *Session {
 	m.sessions[session.Id] = session
 	m.sessionsMutex.Unlock()
 	return session
+}
+
+func (m *SessionManager) CloseSession(xl xlog.Logger, sessionId string) error {
+	session, ok := m.GetSession(xl, sessionId)
+	if !ok {
+		xl.Errorf("session %s not found", sessionId)
+		return fmt.Errorf("session %s not found", sessionId)
+	}
+
+	session.Close()
+	m.sessionsMutex.Lock()
+	delete(m.sessions, session.Id)
+	m.sessionsMutex.Unlock()
+	return nil
 }

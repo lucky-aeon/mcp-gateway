@@ -13,15 +13,15 @@ import (
 )
 
 type ServiceManagerI interface {
-	DeployServer(logger xlog.Logger, name string, config config.MCPServerConfig) error
-	StopServer(logger xlog.Logger, name string)
-	ListServerConfig(logger xlog.Logger) map[string]config.MCPServerConfig
-	GetMcpService(logger xlog.Logger, name string) (ExportMcpService, error)
+	DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) error
+	StopServer(logger xlog.Logger, name NameArg)
+	ListServerConfig(logger xlog.Logger, name NameArg) map[string]config.MCPServerConfig
+	GetMcpService(logger xlog.Logger, name NameArg) (ExportMcpService, error)
 	GetMcpServices(logger xlog.Logger) map[string]ExportMcpService
 	CreateProxySession(logger xlog.Logger) *Session
 	GetProxySession(logger xlog.Logger, id string) (*Session, bool)
 	CloseProxySession(logger xlog.Logger, id string)
-	DeleteServer(logger xlog.Logger, name string) error
+	DeleteServer(logger xlog.Logger, name NameArg) error
 	Close()
 }
 
@@ -66,12 +66,12 @@ func NewServiceManager(cfg config.Config) *ServiceManager {
 	return mgr
 }
 
-func (m *ServiceManager) DeleteServer(logger xlog.Logger, name string) error {
+func (m *ServiceManager) DeleteServer(logger xlog.Logger, name NameArg) error {
 	m.Lock()
 	defer m.Unlock()
-	if mcpService, exists := m.servers[name]; exists {
+	if mcpService, exists := m.servers[name.Server]; exists {
 		mcpService.Stop(logger)
-		delete(m.servers, name)
+		delete(m.servers, name.Server)
 	} else {
 		return fmt.Errorf("服务 %s 不存在", name)
 	}
@@ -79,12 +79,12 @@ func (m *ServiceManager) DeleteServer(logger xlog.Logger, name string) error {
 	return nil
 }
 
-func (m *ServiceManager) DeployServer(logger xlog.Logger, name string, mcpCfg config.MCPServerConfig) error {
+func (m *ServiceManager) DeployServer(logger xlog.Logger, name NameArg, mcpCfg config.MCPServerConfig) error {
 	m.Lock()
 	defer m.Unlock()
 
-	if mcpService, exists := m.servers[name]; exists {
-		logger.Infof("服务 %s 已存在, 重新配置: %v", name, mcpCfg)
+	if mcpService, exists := m.servers[name.Server]; exists {
+		logger.Infof("服务 %s 已存在, 重新配置: %v", name.Server, mcpCfg)
 		mcpService.setConfig(mcpCfg)
 		// 重启服务
 		mcpService.Restart(logger)
@@ -92,27 +92,27 @@ func (m *ServiceManager) DeployServer(logger xlog.Logger, name string, mcpCfg co
 	}
 
 	// 创建服务实例
-	instance := NewMcpService(name, mcpCfg, m)
+	instance := NewMcpService(name.Server, mcpCfg, m)
 	if err := instance.Start(logger); err != nil {
-		logger.Errorf("Failed to start service %s: %v", name, err)
+		logger.Errorf("Failed to start service %s: %v", name.Server, err)
 		return err
 	}
-	m.servers[name] = instance
+	m.servers[name.Server] = instance
 	m.saveConfig()
 	return nil
 }
 
-func (m *ServiceManager) ListServerConfig(logger xlog.Logger) map[string]config.MCPServerConfig {
+func (m *ServiceManager) ListServerConfig(logger xlog.Logger, name NameArg) map[string]config.MCPServerConfig {
 	m.RLock()
 	defer m.RUnlock()
 	config := make(map[string]config.MCPServerConfig)
-	for name, instance := range m.servers {
-		config[name] = instance.Config
+	for server, instance := range m.servers {
+		config[server] = instance.Config
 	}
 	return config
 }
 
-func (m *ServiceManager) GetMcpService(logger xlog.Logger, name string) (ExportMcpService, error) {
+func (m *ServiceManager) GetMcpService(logger xlog.Logger, name NameArg) (ExportMcpService, error) {
 	instance, err := m.getMcpService(name)
 	if err != nil {
 		logger.Errorf("获取服务 %s 失败: %v", name, err)
@@ -121,16 +121,16 @@ func (m *ServiceManager) GetMcpService(logger xlog.Logger, name string) (ExportM
 	return instance, nil
 }
 
-func (m *ServiceManager) getMcpService(name string) (*McpService, error) {
+func (m *ServiceManager) getMcpService(name NameArg) (*McpService, error) {
 	m.RLock()
 	defer m.RUnlock()
-	if instance, exists := m.servers[name]; exists {
+	if instance, exists := m.servers[name.Server]; exists {
 		return instance, nil
 	}
 	return nil, fmt.Errorf("服务 %s 不存在", name)
 }
 
-func (m *ServiceManager) StopServer(logger xlog.Logger, name string) {
+func (m *ServiceManager) StopServer(logger xlog.Logger, name NameArg) {
 	mcp, err := m.getMcpService(name)
 	if err != nil {
 		logger.Errorf("获取服务 %s 失败: %v", name, err)
@@ -141,8 +141,8 @@ func (m *ServiceManager) StopServer(logger xlog.Logger, name string) {
 
 func (m *ServiceManager) saveConfig() error {
 	config := make(map[string]config.MCPServerConfig)
-	for name, instance := range m.servers {
-		config[name] = instance.Config
+	for server, instance := range m.servers {
+		config[server] = instance.Config
 	}
 
 	data, err := json.MarshalIndent(config, "", "  ")
@@ -176,8 +176,8 @@ func (m *ServiceManager) GetMcpServices(logger xlog.Logger) map[string]ExportMcp
 	m.RLock()
 	defer m.RUnlock()
 	exportServices := make(map[string]ExportMcpService)
-	for name, instance := range m.servers {
-		exportServices[name] = instance
+	for server, instance := range m.servers {
+		exportServices[server] = instance
 	}
 	return exportServices
 }
@@ -191,23 +191,23 @@ func (m *ServiceManager) CreateProxySession(xl xlog.Logger) *Session {
 	// 订阅所有MCP服务的SSE事件
 	m.RLock()
 
-	for name, instance := range m.servers {
-		xl.Infof("Subscribing to MCP service: %s", name)
+	for server, instance := range m.servers {
+		xl.Infof("Subscribing to MCP service: %s", server)
 
 		maxRetries := 2
 		retryDelay := time.Second
 
 		for i := 0; i <= maxRetries; i++ {
 			if instance.GetStatus() == Running {
-				session.SubscribeSSE(name, instance.GetSSEUrl())
+				session.SubscribeSSE(server, instance.GetSSEUrl())
 				break
 			}
 
 			if i < maxRetries {
-				xl.Infof("Service[%s] %s not running, retrying (%d/%d)...", instance.GetStatus(), name, i+1, maxRetries)
+				xl.Infof("Service[%s] %s not running, retrying (%d/%d)...", instance.GetStatus(), server, i+1, maxRetries)
 				time.Sleep(retryDelay)
 			} else {
-				xl.Warnf("Service %s still not running after %d retries, skipping", name, maxRetries)
+				xl.Warnf("Service %s still not running after %d retries, skipping", server, maxRetries)
 			}
 		}
 	}
@@ -292,9 +292,9 @@ func (m *ServiceManager) Close() {
 	}
 
 	xl.Infof("Closing all MCP services...")
-	for name, instance := range m.servers {
+	for server, instance := range m.servers {
 		instance.Stop(xl)
-		delete(m.servers, name)
+		delete(m.servers, server)
 	}
 
 	xl.Infof("ServiceManager closed")

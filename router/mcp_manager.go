@@ -34,7 +34,9 @@ func (m *ServerManager) DeployServer(logger echo.Logger, name string, config con
 		return fmt.Errorf("服务配置不能同时包含 URL 和 Command")
 	}
 
-	return m.mcpServiceMgr.DeployServer(logger, name, config)
+	return m.mcpServiceMgr.DeployServer(logger, service.NameArg{
+		Server: name,
+	}, config)
 }
 
 // handleDeploy 处理部署请求
@@ -64,7 +66,9 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 func (m *ServerManager) handleDeleteMcpService(c echo.Context) error {
 	c.Logger().Infof("Delete request: %v", c.Request().Body)
 	name := c.QueryParam("name")
-	if err := m.mcpServiceMgr.DeleteServer(c.Logger(), name); err != nil {
+	if err := m.mcpServiceMgr.DeleteServer(c.Logger(), service.NameArg{
+		Server: name,
+	}); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})

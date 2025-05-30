@@ -22,14 +22,17 @@ func NewWorkspaceManager(cfg config.Config, portManager PortManagerI) *Workspace
 
 // GetWorkspace returns a workspace by id. If the workspace does not exist, it creates a new one.
 // If the workspace is created, it returns false.
-func (m *WorkspaceManager) GetWorkspace(xl xlog.Logger, workId string) (*WorkSpace, bool) {
+func (m *WorkspaceManager) GetWorkspace(xl xlog.Logger, workId string, createIfNotExists bool) (*WorkSpace, bool) {
 	m.workspacesLock.RLock()
 	workspace, ok := m.workspaces[workId]
 	m.workspacesLock.RUnlock()
 	if !ok {
 		xl.Warnf("Workspace %s not found, creating new workspace", workId)
-		workspace = m.createWorkspace(xl)
-		return workspace, false
+		if createIfNotExists {
+			workspace = m.createWorkspace(xl)
+			return workspace, true
+		}
+		return nil, false
 	}
 
 	return workspace, ok
