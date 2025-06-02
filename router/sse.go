@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/lucky-aeon/agentx/plugin-helper/service"
+	"github.com/lucky-aeon/agentx/plugin-helper/utils"
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
@@ -12,12 +14,21 @@ import (
 func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	xl := xlog.WithEchoLogger(c.Logger())
 	xl.Infof("Global SSE request: %v", c.Request().Body)
-	querySessionId := c.QueryParam("sessionId")
+	querySessionId, err := utils.GetSession(c)
+	if err != nil {
+		return c.String(http.StatusBadRequest, err.Error())
+	}
 	if querySessionId == "" {
 		xl.Infof("No session ID provided, creating new session")
 		// 没有sessionId，生成一个返回出
 		// create proxy session
-		session := m.mcpServiceMgr.CreateProxySession(xl)
+		session, err := m.mcpServiceMgr.CreateProxySession(xl, service.NameArg{
+			Workspace: utils.GetWorkspace(c, service.DefaultWorkspace),
+			Session:   querySessionId,
+		})
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
 		xl.Infof("Created new session: %s", session.Id)
 		// 302重定向到 /sse?sessionId={session.Id}
 		return c.Redirect(http.StatusFound, fmt.Sprintf("/sse?sessionId=%s", session.Id))
@@ -27,7 +38,10 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	c.Response().Header().Set("Connection", "keep-alive")
 
 	// get session by sessionId
-	session, exists := m.mcpServiceMgr.GetProxySession(xl, querySessionId)
+	session, exists := m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
+		Workspace: service.DefaultWorkspace,
+		Session:   querySessionId,
+	})
 	if !exists {
 		return c.String(http.StatusNotFound, "session not found")
 	}

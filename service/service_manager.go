@@ -12,15 +12,19 @@ import (
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
+const (
+	DefaultWorkspace = "default"
+)
+
 type ServiceManagerI interface {
 	DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) error
 	StopServer(logger xlog.Logger, name NameArg)
 	ListServerConfig(logger xlog.Logger, name NameArg) map[string]config.MCPServerConfig
 	GetMcpService(logger xlog.Logger, name NameArg) (ExportMcpService, error)
-	GetMcpServices(logger xlog.Logger) map[string]ExportMcpService
-	CreateProxySession(logger xlog.Logger) *Session
-	GetProxySession(logger xlog.Logger, id string) (*Session, bool)
-	CloseProxySession(logger xlog.Logger, id string)
+	GetMcpServices(logger xlog.Logger, name NameArg) map[string]ExportMcpService
+	CreateProxySession(logger xlog.Logger, name NameArg) (*Session, error)
+	GetProxySession(logger xlog.Logger, name NameArg) (*Session, bool)
+	CloseProxySession(logger xlog.Logger, name NameArg)
 	DeleteServer(logger xlog.Logger, name NameArg) error
 	Close()
 }
@@ -172,7 +176,7 @@ func (m *ServiceManager) releasePort(port int) {
 	m.portMutex.Unlock()
 }
 
-func (m *ServiceManager) GetMcpServices(logger xlog.Logger) map[string]ExportMcpService {
+func (m *ServiceManager) GetMcpServices(logger xlog.Logger, name NameArg) map[string]ExportMcpService {
 	m.RLock()
 	defer m.RUnlock()
 	exportServices := make(map[string]ExportMcpService)
@@ -183,7 +187,7 @@ func (m *ServiceManager) GetMcpServices(logger xlog.Logger) map[string]ExportMcp
 }
 
 // CreateProxySession 创建一个新的代理会话
-func (m *ServiceManager) CreateProxySession(xl xlog.Logger) *Session {
+func (m *ServiceManager) CreateProxySession(xl xlog.Logger, name NameArg) (*Session, error) {
 	xl.Infof("Creating new proxy session")
 	xl.Infof("Creating new session")
 	session := NewSession(uuid.New().String())
@@ -217,28 +221,28 @@ func (m *ServiceManager) CreateProxySession(xl xlog.Logger) *Session {
 	m.proxySessionsMutex.Lock()
 	defer m.proxySessionsMutex.Unlock()
 	m.proxySessions[session.Id] = session
-	return session
+	return session, nil
 }
 
 // CloseProxySession 关闭代理会话
-func (m *ServiceManager) CloseProxySession(xl xlog.Logger, id string) {
-	xl.Infof("Closing proxy session: %s", id)
-	xl.Infof("Closing proxy session, has mutex: %s", id)
-	if session, exists := m.proxySessions[id]; exists {
+func (m *ServiceManager) CloseProxySession(xl xlog.Logger, nameArg NameArg) {
+	xl.Infof("Closing proxy session: %s", nameArg.Session)
+	xl.Infof("Closing proxy session, has mutex: %s", nameArg.Session)
+	if session, exists := m.proxySessions[nameArg.Session]; exists {
 		session.Close()
-		xl.Infof("Closed proxy session: %s", id)
+		xl.Infof("Closed proxy session: %s", nameArg.Session)
 		m.proxySessionsMutex.Lock()
 		defer m.proxySessionsMutex.Unlock()
-		delete(m.proxySessions, id)
+		delete(m.proxySessions, nameArg.Session)
 	}
 }
 
 // GetProxySession 获取代理会话
-func (m *ServiceManager) GetProxySession(logger xlog.Logger, id string) (*Session, bool) {
+func (m *ServiceManager) GetProxySession(logger xlog.Logger, nameArg NameArg) (*Session, bool) {
 	m.proxySessionsMutex.RLock()
 	defer m.proxySessionsMutex.RUnlock()
 
-	session, exists := m.proxySessions[id]
+	session, exists := m.proxySessions[nameArg.Session]
 	if !exists {
 		return nil, false
 	}

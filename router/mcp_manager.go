@@ -13,7 +13,9 @@ import (
 // GET ALL MCP SERVICES
 func (m *ServerManager) handleGetAllServices(c echo.Context) error {
 	c.Logger().Infof("Get all services")
-	mcpServices := m.mcpServiceMgr.GetMcpServices(c.Logger())
+	mcpServices := m.mcpServiceMgr.GetMcpServices(c.Logger(), service.NameArg{
+		Workspace: service.DefaultWorkspace,
+	})
 	var serviceInfos []service.McpServiceInfo
 	for _, instance := range mcpServices {
 		serviceInfos = append(serviceInfos, instance.Info())

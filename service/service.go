@@ -49,9 +49,6 @@ type McpService struct {
 	// 重试次数
 	RetryCount int
 	RetryMax   int
-
-	// SessionMgr
-	
 }
 
 // NewMcpService 创建一个McpService实例

@@ -225,11 +225,10 @@ func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) {
 
 		defer func() {
 			s.sseConnMutex.Lock()
-			s.sseConnMutex.Unlock()
-
 			if err := resp.Body.Close(); err != nil {
 				xl.Errorf("failed to close SSE: %v", err)
 			}
+			s.sseConnMutex.Unlock()
 		}()
 
 		reader := bufio.NewReader(resp.Body)

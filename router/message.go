@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/lucky-aeon/agentx/plugin-helper/service"
+	"github.com/lucky-aeon/agentx/plugin-helper/utils"
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
@@ -12,13 +14,16 @@ import (
 func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
 	xl := xlog.WithEchoLogger(c.Logger())
 	xl.Infof("Global message: %v", c.Request().Body)
-	sessionId := c.QueryParam("sessionId")
-	if sessionId == "" {
-		return c.String(http.StatusBadRequest, "missing sessionId")
+	sessionId, err := utils.GetSession(c)
+	if err != nil {
+		return c.String(http.StatusBadRequest, err.Error())
 	}
 
 	// 获取session
-	session, exists := m.mcpServiceMgr.GetProxySession(xl, sessionId)
+	session, exists := m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
+		Workspace: utils.GetWorkspace(c, service.DefaultWorkspace),
+		Session:   sessionId,
+	})
 	if !exists {
 		return c.String(http.StatusNotFound, "session not found")
 	}

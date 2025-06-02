@@ -56,3 +56,9 @@ func (m *WorkspaceManager) createWorkspace(xl xlog.Logger) *WorkSpace {
 	m.workspacesLock.Unlock()
 	return workspace
 }
+
+func (m *WorkspaceManager) GetWorkspaces() map[string]*WorkSpace {
+	m.workspacesLock.RLock()
+	defer m.workspacesLock.RUnlock()
+	return m.workspaces
+}

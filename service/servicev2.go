@@ -53,38 +53,38 @@ func (s *ServiceV2) GetMcpService(logger xlog.Logger, name NameArg) (ExportMcpSe
 
 func (s *ServiceV2) GetMcpServices(logger xlog.Logger, name NameArg) map[string]ExportMcpService {
 	workspace, _ := s.getWorkspace(logger, name.Workspace)
-	services := make(map[string]ExportMcpService)
-	workspace.serversMutex.RLock()
-	defer workspace.serversMutex.RUnlock()
-	for name, service := range workspace.servers {
-		services[name] = service
-	}
-	return services
+	return workspace.GetMcpServices()
 }
 
-func (s *ServiceV2) CreateProxySession(logger xlog.Logger, name NameArg) *Session {
-	return NewSession(name.Session)
+func (s *ServiceV2) CreateProxySession(logger xlog.Logger, name NameArg) (*Session, error) {
+	workspace, _ := s.getWorkspace(logger, name.Workspace)
+	return workspace.sessionMgr.CreateSession(logger)
 }
 
 func (s *ServiceV2) GetProxySession(logger xlog.Logger, name NameArg) (*Session, bool) {
-	return nil, false
+	workspace, _ := s.getWorkspace(logger, name.Workspace)
+	return workspace.sessionMgr.GetSession(logger, name.Session)
 }
 
 func (s *ServiceV2) CloseProxySession(logger xlog.Logger, name NameArg) {
+	workspace, _ := s.getWorkspace(logger, name.Workspace)
+	workspace.sessionMgr.CloseSession(logger, name.Session)
 }
 
 func (s *ServiceV2) DeleteServer(logger xlog.Logger, name NameArg) error {
 	workspace, _ := s.getWorkspace(logger, name.Workspace)
-	if err := workspace.StopMcpService(logger, name.Server); err != nil {
+	if err := workspace.RemoveMcpService(logger, name.Server); err != nil {
 		return err
 	}
-	workspace.serversMutex.Lock()
-	delete(workspace.servers, name.Server)
-	workspace.serversMutex.Unlock()
 	return nil
 }
 
+// Close stops all MCP services in all workspaces.
 func (s *ServiceV2) Close() {
+	xl := xlog.NewLogger("servicev2")
+	for _, workspace := range s.workSpaceMgr.GetWorkspaces() {
+		workspace.Close(xl)
+	}
 }
 
 func (s *ServiceV2) getWorkspace(logger xlog.Logger, name string, createIfNotExists ...bool) (*WorkSpace, bool) {
