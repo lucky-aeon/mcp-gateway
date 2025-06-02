@@ -29,7 +29,7 @@ func (m *WorkspaceManager) GetWorkspace(xl xlog.Logger, workId string, createIfN
 	if !ok {
 		xl.Warnf("Workspace %s not found, creating new workspace", workId)
 		if createIfNotExists {
-			workspace = m.createWorkspace(xl)
+			workspace = m.createWorkspace(xl, workId)
 			return workspace, true
 		}
 		return nil, false
@@ -39,9 +39,11 @@ func (m *WorkspaceManager) GetWorkspace(xl xlog.Logger, workId string, createIfN
 }
 
 // createWorkspace creates a new workspace and returns it.
-func (m *WorkspaceManager) createWorkspace(xl xlog.Logger) *WorkSpace {
-	workId := uuid.New().String()
+func (m *WorkspaceManager) createWorkspace(xl xlog.Logger, workId string) *WorkSpace {
 	xl.Infof("Creating new workspace, id: %s", workId)
+	if workId == "" {
+		workId = uuid.New().String()
+	}
 	workspace := NewWorkSpace(workId, config.WorkspaceConfig{
 		LogConfig: config.LogConfig{
 			Level: m.cfg.LogLevel,

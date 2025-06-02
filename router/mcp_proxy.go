@@ -16,6 +16,8 @@ import (
 func (m *ServerManager) proxyHandler() echo.HandlerFunc {
 	return func(c echo.Context) error {
 		path := c.Request().URL.Path
+		workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+		serviceManager := m.getServiceManager(workspace)
 
 		// 从路径中提取服务名和路由
 		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
@@ -29,7 +31,7 @@ func (m *ServerManager) proxyHandler() echo.HandlerFunc {
 
 		// 获取服务配置
 		m.RLock()
-		instance, err := m.mcpServiceMgr.GetMcpService(c.Logger(), service.NameArg{
+		instance, err := serviceManager.GetMcpService(c.Logger(), service.NameArg{
 			Server: serviceName,
 		})
 		m.RUnlock()

@@ -87,10 +87,10 @@ func (s *ServiceV2) Close() {
 	}
 }
 
-func (s *ServiceV2) getWorkspace(logger xlog.Logger, name string, createIfNotExists ...bool) (*WorkSpace, bool) {
-	create := false
-	if len(createIfNotExists) > 0 {
-		create = createIfNotExists[0]
+func (s *ServiceV2) getWorkspace(logger xlog.Logger, name string, noCreateIfNotExists ...bool) (*WorkSpace, bool) {
+	create := true
+	if len(noCreateIfNotExists) > 0 {
+		create = noCreateIfNotExists[0]
 	}
 	workspace, ok := s.workSpaceMgr.GetWorkspace(logger, name, create)
 	if !ok {

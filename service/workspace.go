@@ -32,7 +32,7 @@ type WorkSpace struct {
 }
 
 func NewWorkSpace(workId string, cfg config.WorkspaceConfig, portManager PortManagerI) *WorkSpace {
-	space := &WorkSpace{Id: workId, cfg: cfg, portManager: portManager}
+	space := &WorkSpace{Id: workId, cfg: cfg, portManager: portManager, servers: make(map[string]*McpService)}
 	// init session manager, it will be used to create session for each workspace
 	space.sessionMgr = NewSessionManager(space)
 	return space

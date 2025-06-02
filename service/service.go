@@ -127,7 +127,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	}
 	s.Status = Starting
 	if s.Port == 0 {
-		s.Port = s.portMgr.getNextAvailablePort()
+		s.Port = s.portMgr.GetNextAvailablePort()
 	}
 	logger.Infof("Assigned port: %d", s.Port)
 	// 创建日志文件

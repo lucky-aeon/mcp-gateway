@@ -18,10 +18,11 @@ func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusBadRequest, err.Error())
 	}
-
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+	serviceManager := m.getServiceManager(workspace)
 	// 获取session
-	session, exists := m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
-		Workspace: utils.GetWorkspace(c, service.DefaultWorkspace),
+	session, exists := serviceManager.GetProxySession(xl, service.NameArg{
+		Workspace: workspace,
 		Session:   sessionId,
 	})
 	if !exists {

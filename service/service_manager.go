@@ -30,8 +30,8 @@ type ServiceManagerI interface {
 }
 
 type PortManagerI interface {
-	getNextAvailablePort() int
-	releasePort(port int)
+	GetNextAvailablePort() int
+	ReleasePort(port int)
 }
 
 // ServiceManager 管理所有运行的服务
@@ -156,8 +156,8 @@ func (m *ServiceManager) saveConfig() error {
 	return os.WriteFile(m.cfg.GetMcpConfigPath(), data, 0644)
 }
 
-// getNextAvailablePort 获取下一个可用端口
-func (m *ServiceManager) getNextAvailablePort() int {
+// GetNextAvailablePort 获取下一个可用端口
+func (m *ServiceManager) GetNextAvailablePort() int {
 	m.portMutex.Lock()
 	defer m.portMutex.Unlock()
 	for m.usedPorts[m.nextPort] {
@@ -169,8 +169,8 @@ func (m *ServiceManager) getNextAvailablePort() int {
 	return port
 }
 
-// releasePort 释放端口
-func (m *ServiceManager) releasePort(port int) {
+// ReleasePort 释放端口
+func (m *ServiceManager) ReleasePort(port int) {
 	m.portMutex.Lock()
 	delete(m.usedPorts, port)
 	m.portMutex.Unlock()

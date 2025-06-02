@@ -16,14 +16,16 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	xl.Infof("Global SSE request: %v", c.Request().Body)
 	querySessionId, err := utils.GetSession(c)
 	if err != nil {
-		return c.String(http.StatusBadRequest, err.Error())
+		xl.Warnf("Get session error: %v", err)
 	}
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+	serviceManager := m.getServiceManager(workspace)
 	if querySessionId == "" {
 		xl.Infof("No session ID provided, creating new session")
 		// 没有sessionId，生成一个返回出
 		// create proxy session
-		session, err := m.mcpServiceMgr.CreateProxySession(xl, service.NameArg{
-			Workspace: utils.GetWorkspace(c, service.DefaultWorkspace),
+		session, err := serviceManager.CreateProxySession(xl, service.NameArg{
+			Workspace: workspace,
 			Session:   querySessionId,
 		})
 		if err != nil {
@@ -31,6 +33,9 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 		}
 		xl.Infof("Created new session: %s", session.Id)
 		// 302重定向到 /sse?sessionId={session.Id}
+		if workspace != "" {
+			return c.Redirect(http.StatusFound, fmt.Sprintf("/sse?sessionId=%s&workspaceId=%s", session.Id, workspace))
+		}
 		return c.Redirect(http.StatusFound, fmt.Sprintf("/sse?sessionId=%s", session.Id))
 	}
 	c.Response().Header().Set("Content-Type", "text/event-stream")
@@ -38,8 +43,8 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	c.Response().Header().Set("Connection", "keep-alive")
 
 	// get session by sessionId
-	session, exists := m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
-		Workspace: service.DefaultWorkspace,
+	session, exists := serviceManager.GetProxySession(xl, service.NameArg{
+		Workspace: workspace,
 		Session:   querySessionId,
 	})
 	if !exists {
@@ -54,7 +59,11 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "flusher not supported")
 	}
 
-	fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\r\n\r\n", session.Id)
+	if workspace != "" {
+		fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s&workspaceId=%s\r\n\r\n", session.Id, workspace)
+	} else {
+		fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\r\n\r\n", session.Id)
+	}
 	flusher.Flush()
 
 	// 转发所有SSE事件

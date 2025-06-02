@@ -8,13 +8,16 @@ import (
 	"github.com/lucky-aeon/agentx/plugin-helper/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/service"
 	"github.com/lucky-aeon/agentx/plugin-helper/types"
+	"github.com/lucky-aeon/agentx/plugin-helper/utils"
 )
 
 // GET ALL MCP SERVICES
 func (m *ServerManager) handleGetAllServices(c echo.Context) error {
 	c.Logger().Infof("Get all services")
-	mcpServices := m.mcpServiceMgr.GetMcpServices(c.Logger(), service.NameArg{
-		Workspace: service.DefaultWorkspace,
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+	serviceManager := m.getServiceManager(workspace)
+	mcpServices := serviceManager.GetMcpServices(c.Logger(), service.NameArg{
+		Workspace: workspace,
 	})
 	var serviceInfos []service.McpServiceInfo
 	for _, instance := range mcpServices {
@@ -36,8 +39,14 @@ func (m *ServerManager) DeployServer(logger echo.Logger, name string, config con
 		return fmt.Errorf("服务配置不能同时包含 URL 和 Command")
 	}
 
-	return m.mcpServiceMgr.DeployServer(logger, service.NameArg{
-		Server: name,
+	if config.Workspace == "" {
+		config.Workspace = service.DefaultWorkspace
+	}
+
+	serviceManager := m.getServiceManager(config.Workspace)
+	return serviceManager.DeployServer(logger, service.NameArg{
+		Server:    name,
+		Workspace: config.Workspace,
 	}, config)
 }
 
@@ -49,9 +58,14 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	c.Logger().Infof("Deploy request: %v", req)
-
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
 	for name, config := range req.MCPServers {
 		c.Logger().Infof("Deploying %s: %v", name, config)
+		if workspace != "" {
+			config.Workspace = workspace
+		} else if config.Workspace == "" {
+			config.Workspace = service.DefaultWorkspace
+		}
 		if err := m.DeployServer(c.Logger(), name, config); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": fmt.Sprintf("Failed to deploy %s: %v", name, err),
@@ -68,8 +82,11 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 func (m *ServerManager) handleDeleteMcpService(c echo.Context) error {
 	c.Logger().Infof("Delete request: %v", c.Request().Body)
 	name := c.QueryParam("name")
-	if err := m.mcpServiceMgr.DeleteServer(c.Logger(), service.NameArg{
-		Server: name,
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+	serviceManager := m.getServiceManager(workspace)
+	if err := serviceManager.DeleteServer(c.Logger(), service.NameArg{
+		Server:    name,
+		Workspace: workspace,
 	}); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}

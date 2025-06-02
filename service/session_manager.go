@@ -16,7 +16,7 @@ type SessionManager struct {
 }
 
 func NewSessionManager(curWorkspace *WorkSpace) *SessionManager {
-	return &SessionManager{curWorkspace: curWorkspace}
+	return &SessionManager{curWorkspace: curWorkspace, sessions: make(map[string]*Session)}
 }
 
 // GetSession returns the session with the given id.
