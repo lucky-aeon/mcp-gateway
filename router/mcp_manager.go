@@ -15,8 +15,7 @@ import (
 func (m *ServerManager) handleGetAllServices(c echo.Context) error {
 	c.Logger().Infof("Get all services")
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	serviceManager := m.getServiceManager(workspace)
-	mcpServices := serviceManager.GetMcpServices(c.Logger(), service.NameArg{
+	mcpServices := m.mcpServiceMgr.GetMcpServices(c.Logger(), service.NameArg{
 		Workspace: workspace,
 	})
 	var serviceInfos []service.McpServiceInfo
@@ -42,9 +41,7 @@ func (m *ServerManager) DeployServer(logger echo.Logger, name string, config con
 	if config.Workspace == "" {
 		config.Workspace = service.DefaultWorkspace
 	}
-
-	serviceManager := m.getServiceManager(config.Workspace)
-	return serviceManager.DeployServer(logger, service.NameArg{
+	return m.mcpServiceMgr.DeployServer(logger, service.NameArg{
 		Server:    name,
 		Workspace: config.Workspace,
 	}, config)
@@ -83,8 +80,7 @@ func (m *ServerManager) handleDeleteMcpService(c echo.Context) error {
 	c.Logger().Infof("Delete request: %v", c.Request().Body)
 	name := c.QueryParam("name")
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	serviceManager := m.getServiceManager(workspace)
-	if err := serviceManager.DeleteServer(c.Logger(), service.NameArg{
+	if err := m.mcpServiceMgr.DeleteServer(c.Logger(), service.NameArg{
 		Server:    name,
 		Workspace: workspace,
 	}); err != nil {

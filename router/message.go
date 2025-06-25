@@ -19,9 +19,8 @@ func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
 		return c.String(http.StatusBadRequest, err.Error())
 	}
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	serviceManager := m.getServiceManager(workspace)
 	// 获取session
-	session, exists := serviceManager.GetProxySession(xl, service.NameArg{
+	session, exists := m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
 		Workspace: workspace,
 		Session:   sessionId,
 	})

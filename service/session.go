@@ -21,31 +21,30 @@ type McpName = string
 type McpToolName = string
 
 type Session struct {
-	sync.RWMutex
+	// 使用单一主锁减少死锁风险
+	mu sync.RWMutex
+
 	Id              string
 	LastReceiveTime time.Time // 最后一次接收消息的时间
 
-	// SSE事件通道
+	// SSE事件通道 - 由主锁保护
 	eventChans []chan SessionMsg
 	doneChan   chan struct{}
-	sendMx     sync.RWMutex
 
-	// SSE订阅
+	// SSE订阅 - 由主锁保护
 	sseWaitGroup sync.WaitGroup
 	sseConns     map[McpName]*http.Response // 存储SSE连接，用于关闭
-	sseConnMutex sync.RWMutex
 	sseCount     atomic.Int32
 
-	mcpMessageUrl  map[McpName]string
-	mcpMsgIdsMutex sync.RWMutex
-	messageIds     map[int64]int64
+	// 消息相关 - 由主锁保护
+	mcpMessageUrl map[McpName]string
+	messageIds    map[int64]int64
 
-	// 工具映射
-	mcpToolsMutex  sync.RWMutex
+	// 工具映射 - 由主锁保护
 	mcpToolsMap    map[McpName]map[McpToolName]types.McpTool
 	waitToolsCount atomic.Int32
 
-	// 避免重复返回
+	// 避免重复返回 - 由主锁保护
 	lastMsg SessionMsg
 }
 
@@ -114,9 +113,9 @@ func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
 		for s.waitToolsCount.Load() > 0 {
 			time.Sleep(500 * time.Millisecond)
 		}
-		s.mcpToolsMutex.Lock()
+		s.mu.Lock()
 		s.mcpToolsMap = make(map[McpName]map[McpToolName]types.McpTool)
-		s.mcpToolsMutex.Unlock()
+		s.mu.Unlock()
 		for mcpName := range s.mcpMessageUrl {
 			if method == "tools/list" {
 				s.waitToolsCount.Add(1)
@@ -140,8 +139,8 @@ func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
 }
 
 func (s *Session) generateMessageId(realMessageId int64) int64 {
-	s.mcpMsgIdsMutex.Lock()
-	defer s.mcpMsgIdsMutex.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// 生成唯一的消息ID
 	now := int64(time.Now().UnixMilli())
 
@@ -151,15 +150,15 @@ func (s *Session) generateMessageId(realMessageId int64) int64 {
 }
 
 func (s *Session) getRealMessageId(messageId int64) (int64, bool) {
-	s.mcpMsgIdsMutex.RLock()
-	defer s.mcpMsgIdsMutex.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	realMessageId, exists := s.messageIds[messageId]
 	return realMessageId, exists
 }
 
 func (s *Session) removeMessageId(messageId int64) {
-	s.mcpMsgIdsMutex.Lock()
-	defer s.mcpMsgIdsMutex.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.messageIds, messageId)
 }
 
@@ -219,16 +218,16 @@ func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) {
 		}
 
 		// 保存连接以便后续关闭
-		s.sseConnMutex.Lock()
+		s.mu.Lock()
 		s.sseConns[mcpName] = resp
-		s.sseConnMutex.Unlock()
+		s.mu.Unlock()
 
 		defer func() {
-			s.sseConnMutex.Lock()
+			s.mu.Lock()
 			if err := resp.Body.Close(); err != nil {
 				xl.Errorf("failed to close SSE: %v", err)
 			}
-			s.sseConnMutex.Unlock()
+			s.mu.Unlock()
 		}()
 
 		reader := bufio.NewReader(resp.Body)
@@ -282,8 +281,8 @@ func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) {
 						// 获取tools
 						if tools := gjson.Get(data, "result.tools").Array(); len(tools) > 0 {
 							isContinue := func() bool {
-								s.mcpToolsMutex.Lock()
-								defer s.mcpToolsMutex.Unlock()
+								s.mu.Lock()
+								defer s.mu.Unlock()
 								s.mcpToolsMap[mcpName] = make(map[McpToolName]types.McpTool)
 								for _, toolJ := range tools {
 									var tool types.McpTool
@@ -380,8 +379,8 @@ func (s *Session) Close() {
 func (s *Session) SendEvent(event SessionMsg) {
 	xl := xlog.NewLogger("session-" + s.Id)
 	xl.Infof("Sending event: %s", event)
-	s.sendMx.RLock()
-	defer s.sendMx.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if s.lastMsg.isDuplicate(&event) {
 		xl.Debugf("Event already sent: %s", event.Event)
@@ -401,8 +400,8 @@ func (s *Session) SendEvent(event SessionMsg) {
 
 // GetEventChan 获取事件通道
 func (s *Session) GetEventChan() <-chan SessionMsg {
-	s.sendMx.Lock()
-	defer s.sendMx.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	curChan := make(chan SessionMsg, 100)
 	s.eventChans = append(s.eventChans, curChan)
 	return curChan
@@ -410,8 +409,8 @@ func (s *Session) GetEventChan() <-chan SessionMsg {
 
 // GetMcpTools 获取指定 MCP 的所有工具
 func (s *Session) GetMcpTools(mcpName McpName) map[McpToolName]types.McpTool {
-	s.mcpToolsMutex.RLock()
-	defer s.mcpToolsMutex.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if tools, ok := s.mcpToolsMap[mcpName]; ok {
 		// 创建一个副本以避免外部修改
 		result := make(map[McpToolName]types.McpTool)
@@ -425,8 +424,8 @@ func (s *Session) GetMcpTools(mcpName McpName) map[McpToolName]types.McpTool {
 
 // GetMcpTool 获取指定 MCP 的指定工具
 func (s *Session) GetMcpTool(mcpName McpName, toolName McpToolName) (types.McpTool, bool) {
-	s.mcpToolsMutex.RLock()
-	defer s.mcpToolsMutex.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if tools, ok := s.mcpToolsMap[mcpName]; ok {
 		if tool, ok := tools[toolName]; ok {
 			return tool, true

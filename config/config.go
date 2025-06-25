@@ -109,8 +109,6 @@ func (c *Config) GetMcpConfigPath() string {
 	return filepath.Join(c.ConfigDirPath, MCP_CONFIG_PATH)
 }
 
-
-
 const CONFIG_PATH = "config.json"
 
 // 保存这个Config信息

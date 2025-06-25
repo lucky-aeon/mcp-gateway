@@ -8,6 +8,10 @@ import (
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
+const (
+	DefaultWorkspace = "default"
+)
+
 type (
 	WorkSpaceStatus string
 )
@@ -58,8 +62,8 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 
 	// add to workspace
 	w.serversMutex.Lock()
+	defer w.serversMutex.Unlock()
 	w.servers[serviceName] = instance
-	w.serversMutex.Unlock()
 	return nil
 }
 
@@ -129,14 +133,31 @@ func (w *WorkSpace) StopMcpService(xl xlog.Logger, serviceName string) error {
 
 // RemoveMcpService removes the MCP service with the given name.
 func (w *WorkSpace) RemoveMcpService(xl xlog.Logger, serviceName string) error {
+	return w.removeMcpServiceInternal(xl, serviceName)
+}
+
+// removeMcpServiceInternal removes the MCP service with the given name.
+// This internal method handles the actual removal logic.
+func (w *WorkSpace) removeMcpServiceInternal(xl xlog.Logger, serviceName string) error {
 	xl.Infof("Removing MCP service %s", serviceName)
-	if err := w.StopMcpService(xl, serviceName); err != nil {
-		return err
+
+	// 先获取服务引用并停止服务
+	w.serversMutex.RLock()
+	server, exists := w.servers[serviceName]
+	w.serversMutex.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("MCP service %s not found", serviceName)
 	}
 
+	// 在锁外停止服务，避免死锁
+	server.Stop(xl)
+
+	// 最后从map中删除
 	w.serversMutex.Lock()
+	defer w.serversMutex.Unlock()
 	delete(w.servers, serviceName)
-	w.serversMutex.Unlock()
+
 	return nil
 }
 
@@ -152,19 +173,33 @@ func (w *WorkSpace) SetMcpServiceConfig(xl xlog.Logger, serviceName string, mcpC
 
 // Close stops all MCP services in the workspace.
 func (w *WorkSpace) Close(xl xlog.Logger) {
-	// 获取服务列表的快照
-	w.serversMutex.RLock()
-	servers := make([]*McpService, 0, len(w.servers))
-	for _, server := range w.servers {
-		servers = append(servers, server)
-	}
-	w.serversMutex.RUnlock()
+	xl.Infof("Closing workspace %s", w.Id)
 
-	// 在释放锁后关闭服务
-	for _, server := range servers {
-		if err := w.RemoveMcpService(xl, server.Name); err != nil {
-			xl.Errorf("Failed to remove MCP service %s: %v", server.Name, err)
+	// 持续循环直到所有服务都被移除，避免快照过期问题
+	for {
+		w.serversMutex.Lock()
+		if len(w.servers) == 0 {
+			w.status = WorkSpaceStatusStopped
+			w.serversMutex.Unlock()
+			break
+		}
+
+		// 获取第一个服务名称（在锁内安全获取）
+		var serverName string
+		for name := range w.servers {
+			serverName = name
+			break
+		}
+		w.serversMutex.Unlock()
+
+		// 在锁外调用 RemoveMcpService 避免死锁
+		if err := w.removeMcpServiceInternal(xl, serverName); err != nil {
+			xl.Errorf("Failed to remove MCP service %s: %v", serverName, err)
+			// 即使失败也要从map中删除，避免无限循环
+			w.serversMutex.Lock()
+			defer w.serversMutex.Unlock()
+			delete(w.servers, serverName)
 		}
 	}
-	w.status = WorkSpaceStatusStopped
+	xl.Infof("Workspace %s closed successfully", w.Id)
 }

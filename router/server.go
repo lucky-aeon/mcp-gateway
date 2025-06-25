@@ -14,19 +14,17 @@ import (
 // ServerManager 管理所有运行的服务
 type ServerManager struct {
 	sync.RWMutex
-	mcpServiceMgr   service.ServiceManagerI
-	McpServiceMgrV2 service.ServiceManagerI
-	cfg             config.Config
+	mcpServiceMgr service.ServiceManagerI
+	cfg           config.Config
 }
 
 // NewServerManager 初始化服务管理器
 func NewServerManager(cfg config.Config, e *echo.Echo) *ServerManager {
-	mcpServiceMgr := service.NewServiceManager(cfg)
-	mcpServiceMgrV2 := service.NewServiceV2(cfg, mcpServiceMgr)
+	portMgr := service.NewPortManager()
+	mcpServiceMgr := service.NewServiceMgr(cfg, portMgr)
 	m := &ServerManager{
-		mcpServiceMgr:   mcpServiceMgr,
-		McpServiceMgrV2: mcpServiceMgrV2,
-		cfg:             cfg,
+		mcpServiceMgr: mcpServiceMgr,
+		cfg:           cfg,
 	}
 
 	// 注册路由
@@ -68,11 +66,4 @@ func (m *ServerManager) loadConfig() error {
 
 func (m *ServerManager) Close() {
 	m.mcpServiceMgr.Close()
-}
-
-func (m *ServerManager) getServiceManager(workspace string) service.ServiceManagerI {
-	if workspace == service.DefaultWorkspace {
-		return m.mcpServiceMgr
-	}
-	return m.McpServiceMgrV2
 }

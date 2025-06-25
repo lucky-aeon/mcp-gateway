@@ -19,12 +19,11 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 		xl.Warnf("Get session error: %v", err)
 	}
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	serviceManager := m.getServiceManager(workspace)
 	if querySessionId == "" {
 		xl.Infof("No session ID provided, creating new session")
 		// 没有sessionId，生成一个返回出
 		// create proxy session
-		session, err := serviceManager.CreateProxySession(xl, service.NameArg{
+		session, err := m.mcpServiceMgr.CreateProxySession(xl, service.NameArg{
 			Workspace: workspace,
 			Session:   querySessionId,
 		})
@@ -43,7 +42,7 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	c.Response().Header().Set("Connection", "keep-alive")
 
 	// get session by sessionId
-	session, exists := serviceManager.GetProxySession(xl, service.NameArg{
+	session, exists := m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
 		Workspace: workspace,
 		Session:   querySessionId,
 	})
