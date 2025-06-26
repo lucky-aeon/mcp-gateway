@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+)
+
+var (
+	logFiles   = make(map[string]*os.File)
+	filesMutex sync.RWMutex
 )
 
 func CreateLogDir(baseDir string) error {
-	// 创建 logs 目录
 	if err := os.MkdirAll(filepath.Join(baseDir, "logs"), 0755); err != nil {
 		return fmt.Errorf("failed to create logs directory: %w", err)
 	}
@@ -24,5 +29,27 @@ func CreateLogFile(baseDir, fileName string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log file: %w", err)
 	}
+
+	// Store file reference for potential cleanup
+	filesMutex.Lock()
+	logFiles[fileName] = file
+	filesMutex.Unlock()
+
 	return file, nil
+}
+
+// CloseLogFiles closes all opened log files
+func CloseLogFiles() {
+	filesMutex.Lock()
+	defer filesMutex.Unlock()
+
+	for name, file := range logFiles {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Error closing log file %s: %v\n", name, err)
+		}
+	}
+	clear(logFiles)
+
+	// Sync the global logger
+	Sync()
 }
