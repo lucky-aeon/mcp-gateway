@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -175,7 +176,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	// 创建stdio-sse桥接
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	bridgeInstance, err := bridge.NewStdioToSSEBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
 	if err != nil {
 		logger.Warnf("close logfile: %v", logFile.Close())
@@ -189,12 +190,12 @@ func (s *McpService) Start(logger xlog.Logger) error {
 
 	// 使用通道来同步服务器启动状态
 	startupChan := make(chan error, 1)
-	
+
 	// 在goroutine中启动bridge服务器（会阻塞运行）
 	go func() {
 		defer close(startupChan)
 		logger.Infof("Starting bridge server on port %d", s.Port)
-		
+
 		// 启动服务器，这里会阻塞
 		if err := bridgeInstance.Start(fmt.Sprintf("0.0.0.0:%d", s.Port)); err != nil {
 			logger.Errorf("Bridge server failed: %v", err)
@@ -206,7 +207,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	// 等待服务器启动结果，最多等待3秒
 	startupTimeout := time.NewTimer(3 * time.Second)
 	defer startupTimeout.Stop()
-	
+
 	select {
 	case err := <-startupChan:
 		if err != nil {
@@ -222,7 +223,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 		// 超时意味着服务器可能正在正常运行（因为Start()会阻塞）
 		// 我们可以通过健康检查来验证
 		logger.Infof("Bridge server startup timeout - checking if server is running")
-		
+
 		// 简单检查：尝试ping bridge
 		if err := bridgeInstance.Ping(context.Background()); err != nil {
 			logger.Warnf("close logfile: %v", logFile.Close())
@@ -231,7 +232,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 			s.Status = Failed
 			return fmt.Errorf("bridge server not responding: %w", err)
 		}
-		
+
 		logger.Infof("Bridge server is running and responding to ping")
 		break
 	}
@@ -307,8 +308,7 @@ func (s *McpService) GetUrl() string {
 		return s.Config.URL
 	}
 	if s.bridge != nil {
-		url, _ := s.bridge.GetUrlPath("")
-		return url
+		return "http://0.0.0.0:" + strconv.Itoa(s.Port)
 	}
 
 	return ""
@@ -319,10 +319,8 @@ func (s *McpService) GetSSEUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
-	if sseUrl, err := s.bridge.CompleteSseEndpoint(); err != nil {
-		return sseUrl
-	}
-	return ""
+	sseUrl, _ := s.bridge.CompleteSseEndpoint()
+	return s.GetUrl() + sseUrl
 }
 
 // Message
@@ -330,11 +328,8 @@ func (s *McpService) GetMessageUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
-	if s.bridge != nil {
-		url, _ := s.bridge.CompleteMessageEndpoint()
-		return url
-	}
-	return ""
+	mesUrl, _ := s.bridge.CompleteMessageEndpoint()
+	return s.GetUrl() + mesUrl
 }
 
 func (s *McpService) GetPort() int {

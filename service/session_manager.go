@@ -40,7 +40,14 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 
 	mcpServices := m.curWorkspace.getMcpServices()
 	for _, mcpService := range mcpServices {
-		session.SubscribeSSE(mcpService.Name, mcpService.GetSSEUrl())
+		if mcpService.GetStatus() != Running {
+			xl.Errorf("service %s is not running", mcpService.Name)
+			return nil, fmt.Errorf("service %s is not running", mcpService.Name)
+		}
+		if err := session.SubscribeSSE(mcpService.Name, mcpService.GetSSEUrl()); err != nil {
+			xl.Errorf("failed to subscribe to SSE for service %s: %v", mcpService.Name, err)
+			return nil, fmt.Errorf("failed to subscribe mcpServer[%s]", mcpService.Name)
+		}
 	}
 	m.sessionsMutex.Lock()
 	m.sessions[session.Id] = session

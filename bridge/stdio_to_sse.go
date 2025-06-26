@@ -122,7 +122,7 @@ func (b *StdioToSSEBridge) setupToolBridge(ctx context.Context) error {
 				return mcp.NewToolResultError(fmt.Sprintf("Failed to call tool %s: %v", toolName, err)), nil
 			}
 
-			b.logger.Debug("Tool call succeeded", "tool_name", toolName)
+			b.logger.Debug("Tool call succeeded", "tool_name", toolName, result)
 			return result, nil
 		})
 	}
@@ -161,7 +161,7 @@ func (b *StdioToSSEBridge) setupResourceBridge(ctx context.Context) error {
 				return nil, fmt.Errorf("failed to read resource %s: %w", resourceURI, err)
 			}
 
-			b.logger.Debug("Resource read succeeded", "resource_uri", resourceURI)
+			b.logger.Debug("Resource read succeeded", "resource_uri", resourceURI, result)
 			return result.Contents, nil
 		})
 	}
@@ -195,7 +195,7 @@ func (b *StdioToSSEBridge) setupResourceBridge(ctx context.Context) error {
 				return nil, fmt.Errorf("failed to read resource template %+v: %w", templateURI, err)
 			}
 
-			b.logger.Debug("Resource template read succeeded", "template_uri", templateURI)
+			b.logger.Debug("Resource template read succeeded", "template_uri", templateURI, result)
 			return result.Contents, nil
 		})
 	}

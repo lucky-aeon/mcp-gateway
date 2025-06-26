@@ -200,27 +200,27 @@ func (s *Session) IsReady() bool {
 }
 
 // SubscribeSSE 订阅MCP服务的SSE事件
-func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) {
+func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) (err error) {
 	s.sseWaitGroup.Add(1)
 	s.sseCount.Add(1)
+	xl := xlog.WithChildName(s.Id, xlog.NewLogger("SSE-RECEIVE-"+string(mcpName)))
+
+	xl.Infof("Subscribing to SSE: %s", sseUrl)
+	resp, err := http.Get(sseUrl)
+	if err != nil {
+		xl.Errorf("failed to subscribe SSE: %v", err)
+		return err
+	}
+	// 保存连接以便后续关闭
+	s.mu.Lock()
+	s.sseConns[mcpName] = resp
+	s.mu.Unlock()
+
 	go func() {
 		defer func() {
 			s.sseWaitGroup.Done()
 			s.sseCount.Add(-1)
 		}()
-		xl := xlog.WithChildName(s.Id, xlog.NewLogger("SSE-RECEIVE-"+string(mcpName)))
-
-		xl.Infof("Subscribing to SSE: %s", sseUrl)
-		resp, err := http.Get(sseUrl)
-		if err != nil {
-			xl.Errorf("failed to subscribe SSE: %v", err)
-			return
-		}
-
-		// 保存连接以便后续关闭
-		s.mu.Lock()
-		s.sseConns[mcpName] = resp
-		s.mu.Unlock()
 
 		defer func() {
 			s.mu.Lock()
@@ -334,6 +334,7 @@ func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) {
 			}
 		}
 	}()
+	return nil
 }
 
 type SessionMsg struct {
