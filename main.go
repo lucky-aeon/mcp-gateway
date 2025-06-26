@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -45,6 +46,13 @@ func main() {
 	mainLogger := xlog.NewLogger("MAIN")
 	mainLogger.Infof("Starting MCP Gateway server, log level: %d", cfg.LogLevel)
 
+	// 启动CPU性能分析
+	cpuProfile := StartCPUProfile("cpu_profile.prof")
+	defer StopCPUProfile(cpuProfile)
+
+	// 启动定期性能分析
+	StartPeriodicProfiling(5 * time.Minute)
+
 	// 创建 Echo 实例
 	e := echo.New()
 	e.HideBanner = true
@@ -56,6 +64,14 @@ func main() {
 
 	// 初始化服务管理器
 	srvMgr := router.NewServerManager(*cfg, e)
+
+	// 启动 pprof 调试服务器在单独端口
+	go func() {
+		mainLogger.Info("Starting pprof server on :6060")
+		if err := http.ListenAndServe(":6060", nil); err != nil {
+			mainLogger.Errorf("pprof server error: %v", err)
+		}
+	}()
 
 	// 设置优雅退出
 	quit := make(chan os.Signal, 1)
@@ -76,6 +92,11 @@ func main() {
 	// 优雅关闭
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
+	// 生成最终的性能分析文件
+	WriteMemProfile("final_mem_profile.prof")
+	WriteGoroutineProfile("final_goroutine_profile.prof")
+
 	srvMgr.Close()
 	if err := e.Shutdown(ctx); err != nil {
 		mainLogger.Fatalf("Error during server shutdown: %v", err)
