@@ -10,11 +10,13 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/lucky-aeon/agentx/plugin-helper/service"
 	"github.com/lucky-aeon/agentx/plugin-helper/utils"
+	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
 // proxyHandler 返回代理处理函数
 func (m *ServerManager) proxyHandler() echo.HandlerFunc {
 	return func(c echo.Context) error {
+		xl := xlog.NewLogger("PROXY")
 		path := c.Request().URL.Path
 
 		// 从路径中提取服务名和路由
@@ -29,7 +31,7 @@ func (m *ServerManager) proxyHandler() echo.HandlerFunc {
 
 		// 获取服务配置
 		m.RLock()
-		instance, err := m.mcpServiceMgr.GetMcpService(c.Logger(), service.NameArg{
+		instance, err := m.mcpServiceMgr.GetMcpService(xl, service.NameArg{
 			Server:    serviceName,
 			Workspace: "__porxy__",
 		})

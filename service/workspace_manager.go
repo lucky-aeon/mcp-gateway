@@ -51,7 +51,6 @@ func (m *WorkspaceManager) createWorkspace(xl xlog.Logger, workId string) *WorkS
 		},
 		McpServiceMgrConfig: m.cfg.McpServiceMgrConfig,
 		Servers:             make(map[string]config.MCPServerConfig),
-		CommandBase:         m.cfg.CommandBase,
 	}, m.portManager)
 	m.workspacesLock.Lock()
 	m.workspaces[workspace.Id] = workspace

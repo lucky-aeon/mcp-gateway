@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/labstack/gommon/log"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/middleware_impl"
@@ -21,7 +19,7 @@ import (
 )
 
 func main() {
-	cfgDir := "/etc/proxy"
+	cfgDir := "./vm"
 	if _, err := os.Stat(cfgDir); os.IsNotExist(err) {
 		cfgDir = "."
 	}
@@ -33,19 +31,23 @@ func main() {
 		cfg.SaveConfig()
 	}()
 
+	// Setup logging with zap
 	xlog.SetHeader(xlog.DefaultHeader)
-	log.Infof("log level: %d", cfg.LogLevel)
-	log.SetLevel(log.Lvl(cfg.LogLevel))
-
-	// 创建proxy log
-	proxyLogFile, err := xlog.CreateLogFile(cfg.ConfigDirPath, "plugin-proxy.log")
+	err = xlog.SetupFileLogging(cfg.ConfigDirPath, "plugin-proxy.log")
 	if err != nil {
-		panic(fmt.Errorf("failed to create proxy log file: %w", err))
+		panic(fmt.Errorf("failed to setup file logging: %w", err))
 	}
+
+	// Ensure log files are closed on exit
+	defer xlog.CloseLogFiles()
+
+	// Create main logger
+	mainLogger := xlog.NewLogger("MAIN")
+	mainLogger.Infof("Starting MCP Gateway server, log level: %d", cfg.LogLevel)
 
 	// 创建 Echo 实例
 	e := echo.New()
-	e.Logger.SetOutput(io.MultiWriter(proxyLogFile, os.Stdout))
+	e.HideBanner = true
 
 	// 添加中间件
 	e.Use(middleware.Logger())
@@ -61,19 +63,22 @@ func main() {
 
 	// 启动服务器（非阻塞）
 	go func() {
+		mainLogger.Infof("Starting server on %s", cfg.Bind)
 		if err := e.Start(cfg.Bind); err != nil && err != http.ErrServerClosed {
-			e.Logger.Fatal("shutting down the server")
+			mainLogger.Fatal("shutting down the server")
 		}
 	}()
 
 	// 等待退出信号
 	<-quit
+	mainLogger.Info("Received shutdown signal, starting graceful shutdown...")
 
 	// 优雅关闭
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	srvMgr.Close()
 	if err := e.Shutdown(ctx); err != nil {
-		e.Logger.Fatal(err)
+		mainLogger.Fatalf("Error during server shutdown: %v", err)
 	}
+	mainLogger.Info("Server shutdown completed")
 }

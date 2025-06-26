@@ -12,7 +12,7 @@ import (
 
 // 全局MESSAGE，这里将POST请求转发到所有MCP服务
 func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
-	xl := xlog.WithEchoLogger(c.Logger())
+	xl := xlog.NewLogger("GLOBAL-MSG")
 	xl.Infof("Global message: %v", c.Request().Body)
 	sessionId, err := utils.GetSession(c)
 	if err != nil {

@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-const COMMAND_SUPERGATEWA = "supergateway"
-
 type Config struct {
 	LogLevel            uint8         // 日志级别
 	ConfigDirPath       string        // 配置文件路径
@@ -18,8 +16,6 @@ type Config struct {
 	SessionGCInterval   time.Duration // Session GC间隔
 	ProxySessionTimeout time.Duration // Proxy Session 超时时间
 	McpServiceMgrConfig McpServiceMgrConfig
-
-	CommandBase string // 命令基础路径, 目前由于依赖STDIO>SSE，因此需要 COMMAND_SUPERGATEWA
 }
 
 func InitConfig(cfgDir string) (cfg *Config, err error) {
@@ -63,9 +59,7 @@ func (c *Config) Default() {
 	if c.McpServiceMgrConfig.McpServiceRetryCount == 0 {
 		c.McpServiceMgrConfig.McpServiceRetryCount = 3
 	}
-	if c.CommandBase == "" {
-		c.CommandBase = COMMAND_SUPERGATEWA
-	}
+
 }
 
 func (c *Config) GetAuthConfig() *AuthConfig {

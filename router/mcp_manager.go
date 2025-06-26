@@ -9,13 +9,15 @@ import (
 	"github.com/lucky-aeon/agentx/plugin-helper/service"
 	"github.com/lucky-aeon/agentx/plugin-helper/types"
 	"github.com/lucky-aeon/agentx/plugin-helper/utils"
+	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
 // GET ALL MCP SERVICES
 func (m *ServerManager) handleGetAllServices(c echo.Context) error {
-	c.Logger().Infof("Get all services")
+	xl := xlog.NewLogger("GET-SERVICES")
+	xl.Infof("Get all services")
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	mcpServices := m.mcpServiceMgr.GetMcpServices(c.Logger(), service.NameArg{
+	mcpServices := m.mcpServiceMgr.GetMcpServices(xl, service.NameArg{
 		Workspace: workspace,
 	})
 	var serviceInfos []service.McpServiceInfo
@@ -26,9 +28,11 @@ func (m *ServerManager) handleGetAllServices(c echo.Context) error {
 }
 
 // DeployServer 部署单个服务
-func (m *ServerManager) DeployServer(logger echo.Logger, name string, config config.MCPServerConfig) error {
+func (m *ServerManager) DeployServer(name string, config config.MCPServerConfig) error {
 	m.Lock()
 	defer m.Unlock()
+
+	logger := xlog.NewLogger("DEPLOY")
 
 	if config.Command == "" && config.URL == "" {
 		return fmt.Errorf("服务配置必须包含 URL 或 Command")
@@ -49,42 +53,64 @@ func (m *ServerManager) DeployServer(logger echo.Logger, name string, config con
 
 // handleDeploy 处理部署请求
 func (m *ServerManager) handleDeploy(c echo.Context) error {
-	c.Logger().Infof("Deploy request: %v", c.Request().Body)
+	xl := xlog.NewLogger("DEPLOY-REQ")
+	xl.Infof("Deploy request: %v", c.Request().Body)
 	var req types.DeployRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	c.Logger().Infof("Deploy request: %v", req)
+	xl.Infof("Deploy request: %v", req)
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
 	for name, config := range req.MCPServers {
-		c.Logger().Infof("Deploying %s: %v", name, config)
+		xl.Infof("Deploying %s: %v", name, config)
 		if workspace != "" {
 			config.Workspace = workspace
 		} else if config.Workspace == "" {
 			config.Workspace = service.DefaultWorkspace
 		}
-		if err := m.DeployServer(c.Logger(), name, config); err != nil {
+		if err := m.DeployServer(name, config); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": fmt.Sprintf("Failed to deploy %s: %v", name, err),
 			})
 		}
 	}
 
-	c.Logger().Infof("Deployed all servers")
+	xl.Infof("Deployed all servers")
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
 }
 
 // handleDeleteMcpService 删除单个服务
 func (m *ServerManager) handleDeleteMcpService(c echo.Context) error {
-	c.Logger().Infof("Delete request: %v", c.Request().Body)
+	xl := xlog.NewLogger("DELETE-SVC")
+	xl.Infof("Delete request: %v", c.Request().Body)
 	name := c.QueryParam("name")
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	if err := m.mcpServiceMgr.DeleteServer(c.Logger(), service.NameArg{
+	if err := m.mcpServiceMgr.DeleteServer(xl, service.NameArg{
 		Server:    name,
 		Workspace: workspace,
 	}); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
+}
+
+// handleGetServiceHealth 获取服务健康状态
+func (m *ServerManager) handleGetServiceHealth(c echo.Context) error {
+	xl := xlog.NewLogger("GET-SERVICE-HEALTH")
+	serviceName := c.Param("name")
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+
+	xl.Infof("Get service health for %s in workspace %s", serviceName, workspace)
+
+	mcpService, err := m.mcpServiceMgr.GetMcpService(xl, service.NameArg{
+		Server:    serviceName,
+		Workspace: workspace,
+	})
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Service %s not found: %v", serviceName, err)})
+	}
+
+	health := mcpService.GetHealthStatus()
+	return c.JSON(http.StatusOK, health)
 }

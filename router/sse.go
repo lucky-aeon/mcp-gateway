@@ -12,7 +12,7 @@ import (
 
 // 全局SSE，这里返回所有MCP服务的SSE事件
 func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
-	xl := xlog.WithEchoLogger(c.Logger())
+	xl := xlog.NewLogger("GLOBAL-SSE")
 	xl.Infof("Global SSE request: %v", c.Request().Body)
 	querySessionId, err := utils.GetSession(c)
 	if err != nil {

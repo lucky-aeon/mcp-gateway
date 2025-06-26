@@ -28,11 +28,12 @@ func NewServerManager(cfg config.Config, e *echo.Echo) *ServerManager {
 	}
 
 	// 注册路由
-	e.POST("/deploy", m.handleDeploy)             // 部署服务
-	e.DELETE("/delete", m.handleDeleteMcpService) // 删除服务
-	e.GET("/sse", m.handleGlobalSSE)              // 全局SSE WIP
-	e.POST("/message", m.handleGlobalMessage)     // 全局消息 WIP
-	e.GET("/services", m.handleGetAllServices)    // 获取所有服务
+	e.POST("/deploy", m.handleDeploy)                         // 部署服务
+	e.DELETE("/delete", m.handleDeleteMcpService)             // 删除服务
+	e.GET("/sse", m.handleGlobalSSE)                          // 全局SSE WIP
+	e.POST("/message", m.handleGlobalMessage)                 // 全局消息 WIP
+	e.GET("/services", m.handleGetAllServices)                // 获取所有服务
+	e.GET("/services/:name/health", m.handleGetServiceHealth) // 获取服务健康状态
 
 	// 代理
 	e.Any("/*", m.proxyHandler())
@@ -56,7 +57,7 @@ func (m *ServerManager) loadConfig() error {
 
 	for name, srv := range config {
 		xl.Infof("Loading server %s: %v", name, srv)
-		if err := m.DeployServer(xl, name, srv); err != nil {
+		if err := m.DeployServer(name, srv); err != nil {
 			xl.Errorf("Error deploying server %s: %v", name, err)
 		}
 	}

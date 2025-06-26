@@ -31,7 +31,7 @@ func (m *AuthMiddleware) GetKeyAuthConfig() middleware.KeyAuthConfig {
 }
 
 func (m *AuthMiddleware) KeyAuthValidator(key string, c echo.Context) (bool, error) {
-	xl := xlog.WithEchoLogger(c.Logger())
+	xl := xlog.NewLogger("AUTH")
 	realPath := c.Request().URL.Path
 	xl.Infof("Auth key: %s, path: %s", key, realPath)
 
