@@ -29,11 +29,14 @@ func (m *ServerManager) proxyHandler() echo.HandlerFunc {
 		lastRoute := parts[len(parts)-1] // 获取最后一个路由部分
 		remainingPath := "/" + strings.Join(parts[1:], "/")
 
+		// 获取workspace信息
+		workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+
 		// 获取服务配置
 		m.RLock()
 		instance, err := m.mcpServiceMgr.GetMcpService(xl, service.NameArg{
 			Server:    serviceName,
-			Workspace: "__porxy__",
+			Workspace: workspace,
 		})
 		m.RUnlock()
 

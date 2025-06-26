@@ -111,3 +111,8 @@ func (s *ServiceManager) getWorkspace(logger xlog.Logger, name string, noCreateI
 	}
 	return workspace, true
 }
+
+// GetWorkspaces 获取所有工作空间
+func (s *ServiceManager) GetWorkspaces() map[string]*WorkSpace {
+	return s.workSpaceMgr.GetWorkspaces()
+}

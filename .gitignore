@@ -8,3 +8,4 @@ yarn.lock
 .vite
 .DS_Store
 CLAUDE.md
+web/dist

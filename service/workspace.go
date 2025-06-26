@@ -92,10 +92,26 @@ func (w *WorkSpace) getMcpServices() map[string]*McpService {
 	return services
 }
 
+func (w *WorkSpace) GetStatus() WorkSpaceStatus {
+	w.serversMutex.RLock()
+	defer w.serversMutex.RUnlock()
+	return w.status
+}
+
+func (w *WorkSpace) UpdateStatus(status WorkSpaceStatus) {
+	w.serversMutex.Lock()
+	w.status = status
+	w.serversMutex.Unlock()
+}
+
 // getMcpService returns the MCP service with the given name. It is used internally.
 func (w *WorkSpace) getMcpService(serviceName string) (*McpService, error) {
-	if w.status != WorkSpaceStatusRunning {
-		return nil, fmt.Errorf("workspace is not running, cannot get MCP service %s", serviceName)
+
+	if w.GetStatus() != WorkSpaceStatusRunning {
+		if len(w.servers) == 0 {
+			return nil, fmt.Errorf("workspace is not running, cannot get MCP service %s", serviceName)
+		}
+		w.UpdateStatus(WorkSpaceStatusRunning)
 	}
 
 	w.serversMutex.RLock()
