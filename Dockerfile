@@ -1,15 +1,11 @@
 FROM golang:1.23-alpine AS builder
 
-
-
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server
-
-FROM supercorp/supergateway
 
 RUN apk add --update --no-cache git
 
@@ -24,8 +20,7 @@ COPY --from=builder /app/proxy-server /usr/local/bin/
 
 # Add execute permissions and set root user
 USER root
-RUN chmod +x /usr/local/bin/supergateway && \
-    chmod +x /usr/local/bin/proxy-server && \
+RUN chmod +x /usr/local/bin/proxy-server && \
     chmod +x /usr/local/bin/uvx && \
     chmod +x /usr/local/bin/uv
 
