@@ -6,3 +6,5 @@ mcp_servers.json
 node_modules
 yarn.lock
 .vite
+.DS_Store
+CLAUDE.md
