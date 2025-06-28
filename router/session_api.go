@@ -16,6 +16,7 @@ type SessionInfo struct {
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
 	LastReceiveTime time.Time `json:"last_receive_time"`
+	IsReady         bool      `json:"is_ready"`
 }
 
 // handleGetWorkspaceSessions 获取工作空间的会话
@@ -24,11 +25,26 @@ func (m *ServerManager) handleGetWorkspaceSessions(c echo.Context) error {
 	workspaceID := c.Param("workspace")
 	xl.Infof("Get sessions for workspace: %s", workspaceID)
 
-	// TODO: 需要扩展 ServiceManager 接口来获取会话信息
-	// 目前只返回空列表，后续需要实现
-	sessions := []SessionInfo{}
+	// 获取工作空间的所有会话
+	sessions := m.mcpServiceMgr.GetWorkspaceSessions(xl, service.NameArg{
+		Workspace: workspaceID,
+	})
 
-	return c.JSON(http.StatusOK, sessions)
+	// 转换为API响应格式
+	sessionInfos := make([]SessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		sessionInfo := SessionInfo{
+			ID:              session.GetId(),
+			WorkspaceID:     workspaceID,
+			Status:          "active",
+			CreatedAt:       session.CreatedAt,
+			LastReceiveTime: session.LastReceiveTime,
+			IsReady:         session.IsToolsListReady(),
+		}
+		sessionInfos = append(sessionInfos, sessionInfo)
+	}
+
+	return c.JSON(http.StatusOK, sessionInfos)
 }
 
 // handleCreateSession 创建新会话
@@ -50,8 +66,9 @@ func (m *ServerManager) handleCreateSession(c echo.Context) error {
 		ID:              session.GetId(),
 		WorkspaceID:     workspaceID,
 		Status:          "active",
-		CreatedAt:       time.Now(),
+		CreatedAt:       session.CreatedAt,
 		LastReceiveTime: session.LastReceiveTime,
+		IsReady:         session.IsToolsListReady(),
 	}
 
 	return c.JSON(http.StatusCreated, sessionInfo)
@@ -92,8 +109,9 @@ func (m *ServerManager) handleGetSessionStatus(c echo.Context) error {
 				ID:              session.GetId(),
 				WorkspaceID:     workspaceID,
 				Status:          "active",
-				CreatedAt:       time.Now(), // TODO: 需要从 session 获取实际创建时间
+				CreatedAt:       session.CreatedAt,
 				LastReceiveTime: session.LastReceiveTime,
+				IsReady:         session.IsToolsListReady(),
 			}
 			return c.JSON(http.StatusOK, sessionInfo)
 		}

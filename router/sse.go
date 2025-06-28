@@ -65,15 +65,19 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 	}
 	flusher.Flush()
 
+	// 获取事件通道和关闭函数
+	eventChan, closeChan := session.GetEventChanWithCloser()
+	
 	// 转发所有SSE事件
 	for {
 		select {
 		case <-c.Request().Context().Done():
 			// client closed connection
-			// session 通过 defer 关闭
 			xl.Infof("Client closed connection, sessionId: %s", querySessionId)
+			// 关闭当前客户端的事件通道
+			closeChan()
 			return nil
-		case event := <-session.GetEventChan():
+		case event := <-eventChan:
 			xl.Infof("to sse: %v", event)
 			//ev := fmt.Sprintf("event: message", event.Data)
 			fmt.Fprintf(w, "event: %s\n", event.Event)

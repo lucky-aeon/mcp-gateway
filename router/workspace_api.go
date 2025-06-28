@@ -33,11 +33,16 @@ func (m *ServerManager) handleGetAllWorkspaces(c echo.Context) error {
 			serviceInfos = append(serviceInfos, svc.Info())
 		}
 
+		// 获取工作空间的session数量
+		sessions := m.mcpServiceMgr.GetWorkspaceSessions(xl, service.NameArg{
+			Workspace: id,
+		})
+
 		workspaceInfo := WorkspaceInfo{
 			ID:           id,
 			Status:       "running", // 简化状态，实际可以从 workspace 获取
 			ServiceCount: len(services),
-			SessionCount: 0, // TODO: 需要从 SessionManager 获取
+			SessionCount: len(sessions),
 			Services:     serviceInfos,
 		}
 		workspaceInfos = append(workspaceInfos, workspaceInfo)

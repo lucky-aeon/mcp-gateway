@@ -71,7 +71,7 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 			// service is running or starting, skip deployment
 			xl.Infof("Service %s is running/starting, skipping deployment", serviceName)
 			return AddMcpServiceResultExisted, nil
-			
+
 		case Stopped, Failed:
 			// service is stopped or failed, remove and redeploy
 			xl.Infof("Service %s is stopped/failed, removing and redeploying", serviceName)
@@ -97,7 +97,7 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 	w.serversMutex.Lock()
 	defer w.serversMutex.Unlock()
 	w.servers[serviceName] = instance
-	
+
 	if serviceExists {
 		return AddMcpServiceResultReplaced, nil
 	}

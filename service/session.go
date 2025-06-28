@@ -24,11 +24,15 @@ type Session struct {
 	mu sync.RWMutex
 
 	Id              string
+	CreatedAt       time.Time // 会话创建时间
 	LastReceiveTime time.Time // 最后一次接收消息的时间
 
 	// SSE事件通道 - 由主锁保护
 	eventChans []chan SessionMsg
 	doneChan   chan struct{}
+
+	// 清理机制
+	cleanupCallback func(sessionId string) // 清理回调函数
 
 	// 工具映射 - 由主锁保护
 	mcpToolsMap       map[McpName]map[McpToolName]mcp.Tool
@@ -45,9 +49,11 @@ type Session struct {
 }
 
 func NewSession(id string) *Session {
-	return &Session{
+	now := time.Now()
+	session := &Session{
 		Id:                   id,
-		LastReceiveTime:      time.Now(),
+		CreatedAt:            now,
+		LastReceiveTime:      now,
 		eventChans:           make([]chan SessionMsg, 0),
 		doneChan:             make(chan struct{}),
 		mcpToolsMap:          make(map[McpName]map[McpToolName]mcp.Tool),
@@ -55,6 +61,53 @@ func NewSession(id string) *Session {
 		toolsListComplete:    atomic.Bool{},
 		mcpClients:           make(map[McpName]client.MCPClient),
 		mcpinitializeResults: make(map[McpName]*mcp.InitializeResult),
+	}
+
+	// 启动监控协程
+	go session.startInactivityMonitor()
+
+	return session
+}
+
+// SetCleanupCallback 设置清理回调函数
+func (s *Session) SetCleanupCallback(callback func(sessionId string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cleanupCallback = callback
+}
+
+// startInactivityMonitor 启动不活跃监控
+func (s *Session) startInactivityMonitor() {
+	ticker := time.NewTicker(30 * time.Second) // 每30秒检查一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.doneChan:
+			return
+		case <-ticker.C:
+			s.checkInactivity()
+		}
+	}
+}
+
+// checkInactivity 检查session是否应该被清理
+func (s *Session) checkInactivity() {
+	s.mu.RLock()
+	hasActiveChans := len(s.eventChans) > 0
+	lastActivity := s.LastReceiveTime
+	cleanupCallback := s.cleanupCallback
+	sessionId := s.Id
+	s.mu.RUnlock()
+
+	// 如果没有活跃的事件通道且超过5分钟没有活动，则清理session
+	if !hasActiveChans && time.Since(lastActivity) > 5*time.Minute {
+		xl := xlog.NewLogger("session-monitor")
+		xl.Infof("Session %s is inactive, triggering cleanup", sessionId)
+
+		if cleanupCallback != nil {
+			cleanupCallback(sessionId)
+		}
 	}
 }
 
@@ -225,10 +278,34 @@ func (smsg *SessionMsg) isDuplicate(newMsg *SessionMsg) bool {
 
 // Close 关闭会话
 func (s *Session) Close() {
-	// 先关闭所有SSE连接
 	xl := xlog.NewLogger("session-" + s.Id)
 	xl.Infof("Closing session: %s", s.Id)
-	xl.Infof("Closing all SSE connections")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 关闭监控协程
+	select {
+	case <-s.doneChan:
+		// 已经关闭
+	default:
+		close(s.doneChan)
+	}
+
+	// 关闭所有MCP客户端
+	for mcpName, client := range s.mcpClients {
+		xl.Infof("Closing MCP client: %s", mcpName)
+		if err := client.Close(); err != nil {
+			xl.Errorf("Error closing MCP client %s: %v", mcpName, err)
+		}
+	}
+
+	// 关闭所有事件通道
+	for i, ch := range s.eventChans {
+		xl.Infof("Closing event channel %d", i)
+		close(ch)
+	}
+	s.eventChans = nil
 
 	xl.Infof("Session closed: %s", s.Id)
 }
@@ -294,7 +371,55 @@ func (s *Session) GetEventChan() <-chan SessionMsg {
 	defer s.mu.Unlock()
 	curChan := make(chan SessionMsg, 100)
 	s.eventChans = append(s.eventChans, curChan)
+
 	return curChan
+}
+
+// GetEventChanWithCloser 获取事件通道并返回关闭函数
+func (s *Session) GetEventChanWithCloser() (<-chan SessionMsg, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	curChan := make(chan SessionMsg, 100)
+	s.eventChans = append(s.eventChans, curChan)
+
+	closer := func() {
+		close(curChan)
+		// 关闭后立即从列表中移除
+		s.removeEventChan(curChan)
+	}
+
+	return curChan, closer
+}
+
+// removeEventChan 从事件通道列表中移除指定通道
+func (s *Session) removeEventChan(targetChan chan SessionMsg) {
+	s.mu.Lock()
+	var shouldTriggerCleanup bool
+	var cleanupCallback func(sessionId string)
+	var sessionId string
+
+	for i, ch := range s.eventChans {
+		if ch == targetChan {
+			// 移除通道
+			s.eventChans = append(s.eventChans[:i], s.eventChans[i+1:]...)
+			break
+		}
+	}
+
+	// 检查是否所有通道都已关闭
+	if len(s.eventChans) == 0 {
+		shouldTriggerCleanup = true
+		cleanupCallback = s.cleanupCallback
+		sessionId = s.Id
+	}
+	s.mu.Unlock()
+
+	// 如果没有活跃通道，触发清理
+	if shouldTriggerCleanup && cleanupCallback != nil {
+		xl := xlog.NewLogger("session-" + sessionId)
+		xl.Infof("No active event channels remaining, triggering session cleanup for %s", sessionId)
+		cleanupCallback(sessionId)
+	}
 }
 
 // GetMcpTools 获取指定 MCP 的所有工具
@@ -634,6 +759,19 @@ func (s *Session) updateToolsMap(mcpName McpName, result *mcp.ListToolsResult) {
 	}
 }
 
-func (s *Session) ping() {
-
+func (s *Session) IsReady() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.mcpClients) == 0 {
+		return false
+	}
+	if len(s.mcpinitializeResults) != len(s.mcpClients) {
+		return false
+	}
+	for _, client := range s.mcpClients {
+		if err := client.Ping(context.TODO()); err != nil {
+			return false
+		}
+	}
+	return true
 }

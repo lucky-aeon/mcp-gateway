@@ -11,10 +11,10 @@ type DeployRequest struct {
 type ServiceDeployStatus string
 
 const (
-	ServiceDeployStatusExisted ServiceDeployStatus = "existed"     // 服务已存在且正在运行
-	ServiceDeployStatusDeployed ServiceDeployStatus = "deployed"   // 服务新部署成功
-	ServiceDeployStatusFailed   ServiceDeployStatus = "failed"     // 服务部署失败
-	ServiceDeployStatusReplaced ServiceDeployStatus = "replaced"   // 服务被替换（停止/失败状态的服务被重新部署）
+	ServiceDeployStatusExisted  ServiceDeployStatus = "existed"  // 服务已存在且正在运行
+	ServiceDeployStatusDeployed ServiceDeployStatus = "deployed" // 服务新部署成功
+	ServiceDeployStatusFailed   ServiceDeployStatus = "failed"   // 服务部署失败
+	ServiceDeployStatusReplaced ServiceDeployStatus = "replaced" // 服务被替换（停止/失败状态的服务被重新部署）
 )
 
 // ServiceDeployResult 单个服务部署结果
@@ -27,10 +27,10 @@ type ServiceDeployResult struct {
 
 // DeployResponse 部署响应结构
 type DeployResponse struct {
-	Success bool                           `json:"success"`           // 整体是否成功
-	Message string                         `json:"message"`           // 整体状态消息
-	Results map[string]ServiceDeployResult `json:"results"`           // 每个服务的部署结果
-	Summary DeploymentSummary              `json:"summary"`           // 部署汇总
+	Success bool                           `json:"success"` // 整体是否成功
+	Message string                         `json:"message"` // 整体状态消息
+	Results map[string]ServiceDeployResult `json:"results"` // 每个服务的部署结果
+	Summary DeploymentSummary              `json:"summary"` // 部署汇总
 }
 
 // DeploymentSummary 部署汇总信息

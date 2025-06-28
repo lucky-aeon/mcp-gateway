@@ -13,6 +13,7 @@ type ServiceManagerI interface {
 	GetMcpServices(logger xlog.Logger, name NameArg) map[string]ExportMcpService
 	CreateProxySession(logger xlog.Logger, name NameArg) (*Session, error)
 	GetProxySession(logger xlog.Logger, name NameArg) (*Session, bool)
+	GetWorkspaceSessions(logger xlog.Logger, name NameArg) []*Session
 	CloseProxySession(logger xlog.Logger, name NameArg)
 	DeleteServer(logger xlog.Logger, name NameArg) error
 	Close()
@@ -77,6 +78,14 @@ func (s *ServiceManager) CreateProxySession(logger xlog.Logger, name NameArg) (*
 func (s *ServiceManager) GetProxySession(logger xlog.Logger, name NameArg) (*Session, bool) {
 	workspace, _ := s.getWorkspace(logger, name.Workspace)
 	return workspace.sessionMgr.GetSession(logger, name.Session)
+}
+
+func (s *ServiceManager) GetWorkspaceSessions(logger xlog.Logger, name NameArg) []*Session {
+	workspace, ok := s.getWorkspace(logger, name.Workspace, true)
+	if !ok {
+		return []*Session{}
+	}
+	return workspace.sessionMgr.GetAllSessions(logger)
 }
 
 func (s *ServiceManager) CloseProxySession(logger xlog.Logger, name NameArg) {

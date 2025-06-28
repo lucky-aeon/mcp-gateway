@@ -38,16 +38,25 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 		return nil, fmt.Errorf("session %s already exists", session.Id)
 	}
 
+	// 设置清理回调
+	session.SetCleanupCallback(func(sessionId string) {
+		xl.Infof("Auto-cleaning inactive session: %s", sessionId)
+		m.CloseSession(xl, sessionId)
+	})
+
 	mcpServices := m.curWorkspace.getMcpServices()
 	for _, mcpService := range mcpServices {
 		if mcpService.GetStatus() != Running {
-			xl.Errorf("service %s is not running", mcpService.Name)
-			return nil, fmt.Errorf("service %s is not running", mcpService.Name)
+			xl.Warnf("service %s is not running", mcpService.Name)
+			continue
 		}
 		if err := session.SubscribeSSE(xl, mcpService.Name, mcpService.GetSSEUrl()); err != nil {
 			xl.Errorf("failed to subscribe to SSE for service %s: %v", mcpService.Name, err)
 			return nil, fmt.Errorf("failed to subscribe mcpServer[%s]", mcpService.Name)
 		}
+	}
+	if !session.IsReady() {
+		return nil, fmt.Errorf("create session %s failed", session.Id)
 	}
 	m.sessionsMutex.Lock()
 	m.sessions[session.Id] = session
@@ -75,4 +84,16 @@ func (m *SessionManager) existsSession(sessionId string) bool {
 	defer m.sessionsMutex.RUnlock()
 	_, ok := m.sessions[sessionId]
 	return ok
+}
+
+// GetAllSessions returns all sessions in the workspace
+func (m *SessionManager) GetAllSessions(_ xlog.Logger) []*Session {
+	m.sessionsMutex.RLock()
+	defer m.sessionsMutex.RUnlock()
+
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	return sessions
 }

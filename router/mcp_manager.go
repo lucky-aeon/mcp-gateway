@@ -61,7 +61,7 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 	}
 	xl.Infof("Deploy request: %v", req)
 	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
-	
+
 	// 初始化响应结构
 	response := types.DeployResponse{
 		Success: true,
@@ -70,7 +70,7 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 			Total: len(req.MCPServers),
 		},
 	}
-	
+
 	// 部署每个服务
 	for name, config := range req.MCPServers {
 		xl.Infof("Deploying %s: %v", name, config)
@@ -79,12 +79,12 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 		} else if config.Workspace == "" {
 			config.Workspace = service.DefaultWorkspace
 		}
-		
+
 		result, err := m.DeployServer(name, config)
 		serviceResult := types.ServiceDeployResult{
 			Name: name,
 		}
-		
+
 		if err != nil {
 			xl.Errorf("Failed to deploy %s: %v", name, err)
 			serviceResult.Status = types.ServiceDeployStatusFailed
@@ -109,18 +109,18 @@ func (m *ServerManager) handleDeploy(c echo.Context) error {
 				response.Summary.Replaced++
 			}
 		}
-		
+
 		response.Results[name] = serviceResult
 	}
-	
+
 	// 设置整体消息
 	if response.Success {
-		response.Message = fmt.Sprintf("部署完成: %d个服务总计，%d个新部署，%d个已存在，%d个已替换，%d个失败", 
-			response.Summary.Total, response.Summary.Deployed, 
+		response.Message = fmt.Sprintf("部署完成: %d个服务总计，%d个新部署，%d个已存在，%d个已替换，%d个失败",
+			response.Summary.Total, response.Summary.Deployed,
 			response.Summary.Existed, response.Summary.Replaced, response.Summary.Failed)
 	} else {
-		response.Message = fmt.Sprintf("部署完成但存在失败: %d个服务总计，%d个新部署，%d个已存在，%d个已替换，%d个失败", 
-			response.Summary.Total, response.Summary.Deployed, 
+		response.Message = fmt.Sprintf("部署完成但存在失败: %d个服务总计，%d个新部署，%d个已存在，%d个已替换，%d个失败",
+			response.Summary.Total, response.Summary.Deployed,
 			response.Summary.Existed, response.Summary.Replaced, response.Summary.Failed)
 	}
 
