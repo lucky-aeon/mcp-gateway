@@ -646,8 +646,8 @@ func (m *ServerManager) getHandlerName(routeName string) string {
 // getAPIDescription 获取API描述
 func (m *ServerManager) getAPIDescription(method, path, handler string) string {
 	descriptions := map[string]string{
-		"POST /deploy":              "部署新的MCP服务",
-		"DELETE /delete":            "删除MCP服务",
+		"POST /deploy":              "批量部署多个MCP服务",
+		"DELETE /delete":            "删除单个MCP服务",
 		"GET /sse":                  "全局SSE事件流",
 		"POST /message":             "发送全局消息",
 		"GET /services":             "获取所有服务列表",
@@ -684,21 +684,79 @@ func (m *ServerManager) getAPIExamples(method, path string) []APIExample {
 	switch method + " " + path {
 	case "POST /deploy":
 		examples = append(examples, APIExample{
-			Name:        "部署服务示例",
-			Description: "部署一个新的MCP服务",
+			Name:        "批量部署服务示例",
+			Description: "同时部署多个MCP服务",
 			Request: map[string]interface{}{
-				"name":      "example-service",
-				"command":   []string{"uvx", "mcp-server-example"},
-				"workspace": "default",
+				"mcpServers": map[string]interface{}{
+					"git-service": map[string]interface{}{
+						"workspace": "default",
+						"command":   "uvx",
+						"args":      []string{"mcp-server-git", "--repository", "/path/to/repo"},
+						"env": map[string]string{
+							"GIT_REPO_PATH": "/path/to/repo",
+						},
+					},
+					"file-service": map[string]interface{}{
+						"workspace": "default",
+						"command":   "uvx",
+						"args":      []string{"mcp-server-filesystem", "--allowed-paths", "/tmp"},
+					},
+					"web-service": map[string]interface{}{
+						"workspace": "test",
+						"url":       "http://localhost:3000",
+					},
+				},
 			},
 			Response: map[string]interface{}{
 				"success": true,
-				"message": "Service deployed successfully",
-				"service_info": map[string]interface{}{
-					"name":   "example-service",
-					"status": "running",
-					"port":   8081,
+				"message": "Deployment completed: 3 successful, 0 failed",
+				"results": map[string]interface{}{
+					"git-service": map[string]interface{}{
+						"success": true,
+						"status":  "deployed",
+						"service_info": map[string]interface{}{
+							"name":   "git-service",
+							"status": "running",
+							"port":   8081,
+						},
+					},
+					"file-service": map[string]interface{}{
+						"success": true,
+						"status":  "deployed",
+						"service_info": map[string]interface{}{
+							"name":   "file-service",
+							"status": "running",
+							"port":   8082,
+						},
+					},
+					"web-service": map[string]interface{}{
+						"success": true,
+						"status":  "deployed",
+						"service_info": map[string]interface{}{
+							"name":   "web-service",
+							"status": "running",
+							"port":   8083,
+						},
+					},
 				},
+				"summary": map[string]interface{}{
+					"total":      3,
+					"successful": 3,
+					"failed":     0,
+				},
+			},
+		})
+	case "DELETE /delete":
+		examples = append(examples, APIExample{
+			Name:        "删除服务示例",
+			Description: "删除指定的MCP服务",
+			Request: map[string]interface{}{
+				"query_params": map[string]string{
+					"name": "example-service",
+				},
+			},
+			Response: map[string]interface{}{
+				"status": "success",
 			},
 		})
 	case "GET /services":

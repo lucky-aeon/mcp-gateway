@@ -23,7 +23,7 @@ func (m *ServerManager) handleDeployServiceToWorkspace(c echo.Context) error {
 
 	for name, config := range req.MCPServers {
 		config.Workspace = workspaceID
-		if err := m.DeployServer(name, config); err != nil {
+		if _, err := m.DeployServer(name, config); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": err.Error(),
 			})
@@ -64,7 +64,7 @@ func (m *ServerManager) handleUpdateServiceConfig(c echo.Context) error {
 	}
 
 	// 重新部署服务
-	if err := m.DeployServer(serviceName, config); err != nil {
+	if _, err := m.DeployServer(serviceName, config); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})
@@ -99,7 +99,7 @@ func (m *ServerManager) handleRestartService(c echo.Context) error {
 	}
 
 	// 重新部署服务
-	if err := m.DeployServer(serviceName, config); err != nil {
+	if _, err := m.DeployServer(serviceName, config); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})
@@ -143,7 +143,7 @@ func (m *ServerManager) handleStartService(c echo.Context) error {
 	}
 
 	// 部署服务
-	if err := m.DeployServer(serviceName, config); err != nil {
+	if _, err := m.DeployServer(serviceName, config); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})

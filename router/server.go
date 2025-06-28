@@ -87,7 +87,7 @@ func (m *ServerManager) loadConfig() error {
 
 	for name, srv := range config {
 		xl.Infof("Loading server %s: %v", name, srv)
-		if err := m.DeployServer(name, srv); err != nil {
+		if _, err := m.DeployServer(name, srv); err != nil {
 			xl.Errorf("Error deploying server %s: %v", name, err)
 		}
 	}

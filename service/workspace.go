@@ -42,29 +42,66 @@ func NewWorkSpace(workId string, cfg config.WorkspaceConfig, portManager PortMan
 	return space
 }
 
+// AddMcpServiceResult 表示添加服务的操作结果类型
+type AddMcpServiceResult string
+
+const (
+	AddMcpServiceResultDeployed AddMcpServiceResult = "deployed" // 新部署成功
+	AddMcpServiceResultExisted  AddMcpServiceResult = "existed"  // 已存在且运行中
+	AddMcpServiceResultReplaced AddMcpServiceResult = "replaced" // 替换了停止/失败的服务
+)
+
 // AddMcpService adds a new MCP service to the workspace.
-func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig config.MCPServerConfig) error {
+// Returns the operation result type and error if any.
+func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig config.MCPServerConfig) (AddMcpServiceResult, error) {
 	xl.Infof("Adding MCP service %s", serviceName)
 
-	// check if the service already exists in the workspace config
-	if _, ok := w.cfg.GetMcpServerCfg(serviceName); ok {
-		xl.Warnf("MCP service %s already exists in workspace config, skipping", serviceName)
-		return fmt.Errorf("MCP service %s already exists in workspace config, skipping", serviceName)
+	// check if the service already exists
+	w.serversMutex.RLock()
+	existingService, serviceExists := w.servers[serviceName]
+	w.serversMutex.RUnlock()
+
+	if serviceExists {
+		// service exists, check its status
+		status := existingService.GetStatus()
+		xl.Infof("Service %s already exists with status: %s", serviceName, status)
+
+		switch status {
+		case Running, Starting:
+			// service is running or starting, skip deployment
+			xl.Infof("Service %s is running/starting, skipping deployment", serviceName)
+			return AddMcpServiceResultExisted, nil
+			
+		case Stopped, Failed:
+			// service is stopped or failed, remove and redeploy
+			xl.Infof("Service %s is stopped/failed, removing and redeploying", serviceName)
+			if err := w.removeMcpServiceInternal(xl, serviceName); err != nil {
+				xl.Errorf("Failed to remove existing service %s: %v", serviceName, err)
+				return "", fmt.Errorf("failed to remove existing service: %v", err)
+			}
+			// continue to deploy new service
+		}
 	}
+
+	// add to workspace config
 	w.cfg.AddMcpServerCfg(serviceName, mcpConfig)
 
 	// create service instance
 	instance := NewMcpService(serviceName, mcpConfig, w.portManager)
 	if err := instance.Start(xl); err != nil {
 		xl.Errorf("Failed to start service %s: %v", serviceName, err)
-		return err
+		return "", err
 	}
 
 	// add to workspace
 	w.serversMutex.Lock()
 	defer w.serversMutex.Unlock()
 	w.servers[serviceName] = instance
-	return nil
+	
+	if serviceExists {
+		return AddMcpServiceResultReplaced, nil
+	}
+	return AddMcpServiceResultDeployed, nil
 }
 
 // GetMcpService returns the MCP service with the given name.

@@ -6,7 +6,7 @@ import (
 )
 
 type ServiceManagerI interface {
-	DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) error
+	DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) (AddMcpServiceResult, error)
 	StopServer(logger xlog.Logger, name NameArg)
 	ListServerConfig(logger xlog.Logger, name NameArg) map[string]config.MCPServerConfig
 	GetMcpService(logger xlog.Logger, name NameArg) (ExportMcpService, error)
@@ -38,7 +38,7 @@ func NewServiceMgr(cfg config.Config, portMgr PortManagerI) *ServiceManager {
 	}
 }
 
-func (s *ServiceManager) DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) error {
+func (s *ServiceManager) DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) (AddMcpServiceResult, error) {
 	workspace, _ := s.getWorkspace(logger, name.Workspace)
 	return workspace.AddMcpService(logger, name.Server, config)
 }
