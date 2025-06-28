@@ -320,4 +320,82 @@ export class MCPMessageSender {
   }
 }
 
+// API Debug Types
+export interface APIParameter {
+  name: string;
+  type: string;
+  location: string; // path, query, body, header
+  required: boolean;
+  description?: string;
+  example?: string;
+}
+
+export interface APIExample {
+  name: string;
+  description?: string;
+  request?: Record<string, any>;
+  response?: Record<string, any>;
+}
+
+export interface APIEndpoint {
+  method: string;
+  path: string;
+  handler: string;
+  middleware?: string[];
+  parameters?: APIParameter[];
+  description?: string;
+  group?: string;
+  tags?: string[];
+  examples?: APIExample[];
+}
+
+export interface APIDiscoveryResponse {
+  total_endpoints: number;
+  groups: string[];
+  endpoints: APIEndpoint[];
+  generated_at: string;
+  version: string;
+}
+
+export interface APITestRequest {
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+  body?: Record<string, any>;
+  content_type?: string;
+}
+
+export interface APITestResponse {
+  success: boolean;
+  status_code: number;
+  response_time: number; // in nanoseconds
+  response?: Record<string, any>;
+  error?: string;
+  request_headers?: Record<string, string>;
+  request_body?: string;
+  response_body?: string;
+}
+
+export interface APIGroupsResponse {
+  groups: Record<string, {
+    description: string;
+    endpoints: string[];
+  }>;
+  total_groups: number;
+}
+
+// API Debug API
+export const apiDebugApi = {
+  // 获取所有API列表
+  discoverAPIs: () => api.get<APIDiscoveryResponse>("/debug/apis"),
+  
+  // 获取API分组信息
+  getAPIGroups: () => api.get<APIGroupsResponse>("/debug/apis/groups"),
+  
+  // 测试API端点
+  testAPI: (request: APITestRequest) => 
+    api.post<APITestResponse>("/debug/apis/test", request),
+};
+
 export default api;

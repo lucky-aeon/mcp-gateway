@@ -7,6 +7,7 @@ import Workspaces from './pages/Workspaces';
 import Services from './pages/Services';
 import Sessions from './pages/Sessions';
 import Settings from './pages/Settings';
+import APIDebug from './pages/APIDebug';
 
 const theme = createTheme({
   palette: {
@@ -30,6 +31,7 @@ function App() {
             <Route path="/workspaces" element={<Workspaces />} />
             <Route path="/services" element={<Services />} />
             <Route path="/sessions" element={<Sessions />} />
+            <Route path="/api-debug" element={<APIDebug />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Layout>

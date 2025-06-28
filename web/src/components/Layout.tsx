@@ -22,6 +22,7 @@ import {
   Apps,
   Group as Session,
   Settings,
+  Api as ApiDebug,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -36,6 +37,7 @@ const menuItems = [
   { text: 'Workspaces', icon: <Workspaces />, path: '/workspaces' },
   { text: 'Services', icon: <Apps />, path: '/services' },
   { text: 'Sessions', icon: <Session />, path: '/sessions' },
+  { text: 'API Debug', icon: <ApiDebug />, path: '/api-debug' },
   { text: 'Settings', icon: <Settings />, path: '/settings' },
 ];
 

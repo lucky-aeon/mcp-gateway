@@ -1,9 +1,16 @@
 package router
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/lucky-aeon/agentx/plugin-helper/service"
@@ -38,6 +45,68 @@ type ServiceLogsResponse struct {
 	ServiceName string     `json:"service_name"`
 	Logs        []LogEntry `json:"logs"`
 	TotalLines  int        `json:"total_lines"`
+}
+
+// APIEndpoint API端点信息
+type APIEndpoint struct {
+	Method      string         `json:"method"`
+	Path        string         `json:"path"`
+	Handler     string         `json:"handler"`
+	Middleware  []string       `json:"middleware,omitempty"`
+	Parameters  []APIParameter `json:"parameters,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Group       string         `json:"group,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	Examples    []APIExample   `json:"examples,omitempty"`
+}
+
+// APIParameter API参数信息
+type APIParameter struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Location    string `json:"location"` // path, query, body, header
+	Required    bool   `json:"required"`
+	Description string `json:"description,omitempty"`
+	Example     string `json:"example,omitempty"`
+}
+
+// APIExample API使用示例
+type APIExample struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Request     map[string]interface{} `json:"request,omitempty"`
+	Response    map[string]interface{} `json:"response,omitempty"`
+}
+
+// APIDiscoveryResponse API发现响应
+type APIDiscoveryResponse struct {
+	TotalEndpoints int           `json:"total_endpoints"`
+	Groups         []string      `json:"groups"`
+	Endpoints      []APIEndpoint `json:"endpoints"`
+	GeneratedAt    time.Time     `json:"generated_at"`
+	Version        string        `json:"version"`
+}
+
+// APITestRequest API测试请求
+type APITestRequest struct {
+	Method      string                 `json:"method"`
+	Path        string                 `json:"path"`
+	Headers     map[string]string      `json:"headers,omitempty"`
+	Query       map[string]string      `json:"query,omitempty"`
+	Body        map[string]interface{} `json:"body,omitempty"`
+	ContentType string                 `json:"content_type,omitempty"`
+}
+
+// APITestResponse API测试响应
+type APITestResponse struct {
+	Success        bool                   `json:"success"`
+	StatusCode     int                    `json:"status_code"`
+	ResponseTime   time.Duration          `json:"response_time"`
+	Response       map[string]interface{} `json:"response,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	RequestHeaders map[string]string      `json:"request_headers,omitempty"`
+	RequestBody    string                 `json:"request_body,omitempty"`
+	ResponseBody   string                 `json:"response_body,omitempty"`
 }
 
 // handleDebugService 调试特定服务
@@ -385,5 +454,495 @@ func (m *ServerManager) setupDebugRoutes(api *echo.Group) {
 	debug.GET("/info", m.handleGetServiceDebugInfo)         // 获取调试信息
 	debug.POST("/test", m.handleDebugService)               // 发送调试消息
 	debug.GET("/connection", m.handleTestServiceConnection) // 测试连接
-	debug.GET("/logs", m.handleGetServiceDebugLogs)        // 获取日志
+	debug.GET("/logs", m.handleGetServiceDebugLogs)         // 获取日志
+
+	// API发现和调试路由
+	apiDebug := api.Group("/debug")
+	apiDebug.GET("/apis", m.handleDiscoverAPIs)        // 获取所有API列表
+	apiDebug.POST("/apis/test", m.handleTestAPI)       // 测试API端点
+	apiDebug.GET("/apis/groups", m.handleGetAPIGroups) // 获取API分组
+}
+
+// handleDiscoverAPIs 自动发现所有API端点
+func (m *ServerManager) handleDiscoverAPIs(c echo.Context) error {
+	logger := xlog.NewLogger("[APIDiscovery]")
+	logger.Info("Starting API discovery")
+
+	// 获取Echo实例的路由信息
+	echoInstance := c.Echo()
+	routes := echoInstance.Routes()
+
+	var endpoints []APIEndpoint
+	groupSet := make(map[string]bool)
+
+	for _, route := range routes {
+		endpoint := m.analyzeRoute(route)
+		if endpoint != nil {
+			endpoints = append(endpoints, *endpoint)
+			if endpoint.Group != "" {
+				groupSet[endpoint.Group] = true
+			}
+		}
+	}
+
+	// 排序端点
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Group != endpoints[j].Group {
+			return endpoints[i].Group < endpoints[j].Group
+		}
+		if endpoints[i].Method != endpoints[j].Method {
+			return endpoints[i].Method < endpoints[j].Method
+		}
+		return endpoints[i].Path < endpoints[j].Path
+	})
+
+	// 提取分组列表
+	var groups []string
+	for group := range groupSet {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+
+	response := APIDiscoveryResponse{
+		TotalEndpoints: len(endpoints),
+		Groups:         groups,
+		Endpoints:      endpoints,
+		GeneratedAt:    time.Now(),
+		Version:        "1.0",
+	}
+
+	logger.Infof("Discovered %d API endpoints in %d groups", len(endpoints), len(groups))
+	return c.JSON(http.StatusOK, response)
+}
+
+// analyzeRoute 分析路由信息
+func (m *ServerManager) analyzeRoute(route *echo.Route) *APIEndpoint {
+	// 过滤掉不需要的路由
+	if strings.Contains(route.Path, "*") && route.Path != "/*" {
+		return nil
+	}
+
+	// 确定API分组
+	group := m.getAPIGroup(route.Path)
+
+	// 分析路径参数
+	parameters := m.extractPathParameters(route.Path)
+
+	// 获取处理器名称
+	handlerName := m.getHandlerName(route.Name)
+
+	// 添加描述和示例
+	description := m.getAPIDescription(route.Method, route.Path, handlerName)
+	examples := m.getAPIExamples(route.Method, route.Path)
+
+	endpoint := &APIEndpoint{
+		Method:      route.Method,
+		Path:        route.Path,
+		Handler:     handlerName,
+		Parameters:  parameters,
+		Description: description,
+		Group:       group,
+		Examples:    examples,
+		Tags:        m.getAPITags(route.Path),
+	}
+
+	return endpoint
+}
+
+// getAPIGroup 根据路径确定API分组
+func (m *ServerManager) getAPIGroup(path string) string {
+	if strings.HasPrefix(path, "/api/debug") {
+		return "调试接口"
+	} else if strings.HasPrefix(path, "/api/workspaces") {
+		return "工作空间管理"
+	} else if strings.Contains(path, "/sessions") {
+		return "会话管理"
+	} else if strings.Contains(path, "/services") {
+		return "服务管理"
+	} else if strings.HasPrefix(path, "/api") {
+		return "API接口"
+	} else if path == "/deploy" || path == "/delete" {
+		return "核心功能"
+	} else if path == "/sse" || path == "/message" {
+		return "通信接口"
+	} else if path == "/services" {
+		return "服务状态"
+	} else if path == "/*" {
+		return "代理转发"
+	}
+	return "其他"
+}
+
+// extractPathParameters 提取路径参数
+func (m *ServerManager) extractPathParameters(path string) []APIParameter {
+	var parameters []APIParameter
+
+	// 使用正则表达式匹配路径参数
+	re := regexp.MustCompile(`:(\w+)`)
+	matches := re.FindAllStringSubmatch(path, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			paramName := match[1]
+			param := APIParameter{
+				Name:        paramName,
+				Type:        "string",
+				Location:    "path",
+				Required:    true,
+				Description: m.getParameterDescription(paramName),
+				Example:     m.getParameterExample(paramName),
+			}
+			parameters = append(parameters, param)
+		}
+	}
+
+	return parameters
+}
+
+// getParameterDescription 获取参数描述
+func (m *ServerManager) getParameterDescription(paramName string) string {
+	descriptions := map[string]string{
+		"workspace": "工作空间ID",
+		"name":      "服务名称",
+		"id":        "资源ID",
+		"session":   "会话ID",
+	}
+
+	if desc, exists := descriptions[paramName]; exists {
+		return desc
+	}
+	return fmt.Sprintf("%s参数", paramName)
+}
+
+// getParameterExample 获取参数示例
+func (m *ServerManager) getParameterExample(paramName string) string {
+	examples := map[string]string{
+		"workspace": "default",
+		"name":      "example-service",
+		"id":        "12345",
+		"session":   "sess_123",
+	}
+
+	if example, exists := examples[paramName]; exists {
+		return example
+	}
+	return "example"
+}
+
+// getHandlerName 获取处理器名称
+func (m *ServerManager) getHandlerName(routeName string) string {
+	if routeName == "" {
+		return "未知处理器"
+	}
+
+	// 清理处理器名称
+	parts := strings.Split(routeName, ".")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return routeName
+}
+
+// getAPIDescription 获取API描述
+func (m *ServerManager) getAPIDescription(method, path, handler string) string {
+	descriptions := map[string]string{
+		"POST /deploy":              "部署新的MCP服务",
+		"DELETE /delete":            "删除MCP服务",
+		"GET /sse":                  "全局SSE事件流",
+		"POST /message":             "发送全局消息",
+		"GET /services":             "获取所有服务列表",
+		"GET /api/workspaces":       "获取所有工作空间",
+		"POST /api/workspaces":      "创建新工作空间",
+		"DELETE /api/workspaces":    "删除工作空间",
+		"GET /api/debug/apis":       "发现所有API端点",
+		"POST /api/debug/apis/test": "测试API端点",
+	}
+
+	key := method + " " + path
+	if desc, exists := descriptions[key]; exists {
+		return desc
+	}
+
+	// 基于路径和方法生成描述
+	if strings.Contains(handler, "Debug") {
+		return "调试相关功能"
+	} else if strings.Contains(handler, "Workspace") {
+		return "工作空间操作"
+	} else if strings.Contains(handler, "Service") {
+		return "服务管理操作"
+	} else if strings.Contains(handler, "Session") {
+		return "会话管理操作"
+	}
+
+	return fmt.Sprintf("%s操作", method)
+}
+
+// getAPIExamples 获取API使用示例
+func (m *ServerManager) getAPIExamples(method, path string) []APIExample {
+	var examples []APIExample
+
+	switch method + " " + path {
+	case "POST /deploy":
+		examples = append(examples, APIExample{
+			Name:        "部署服务示例",
+			Description: "部署一个新的MCP服务",
+			Request: map[string]interface{}{
+				"name":      "example-service",
+				"command":   []string{"uvx", "mcp-server-example"},
+				"workspace": "default",
+			},
+			Response: map[string]interface{}{
+				"success": true,
+				"message": "Service deployed successfully",
+				"service_info": map[string]interface{}{
+					"name":   "example-service",
+					"status": "running",
+					"port":   8081,
+				},
+			},
+		})
+	case "GET /services":
+		examples = append(examples, APIExample{
+			Name:        "获取服务列表",
+			Description: "获取所有运行中的服务",
+			Response: map[string]interface{}{
+				"services": []map[string]interface{}{
+					{
+						"name":      "example-service",
+						"status":    "running",
+						"port":      8081,
+						"workspace": "default",
+					},
+				},
+				"total": 1,
+			},
+		})
+	case "POST /api/debug/apis/test":
+		examples = append(examples, APIExample{
+			Name:        "测试API端点",
+			Description: "动态测试任意API端点",
+			Request: map[string]interface{}{
+				"method": "GET",
+				"path":   "/services",
+				"headers": map[string]string{
+					"Authorization": "Bearer your-api-key",
+				},
+			},
+			Response: map[string]interface{}{
+				"success":       true,
+				"status_code":   200,
+				"response_time": "15ms",
+				"response": map[string]interface{}{
+					"services": []string{"service1", "service2"},
+				},
+			},
+		})
+	}
+
+	return examples
+}
+
+// getAPITags 获取API标签
+func (m *ServerManager) getAPITags(path string) []string {
+	var tags []string
+
+	if strings.Contains(path, "/debug") {
+		tags = append(tags, "调试")
+	}
+	if strings.Contains(path, "/workspaces") {
+		tags = append(tags, "工作空间")
+	}
+	if strings.Contains(path, "/services") {
+		tags = append(tags, "服务")
+	}
+	if strings.Contains(path, "/sessions") {
+		tags = append(tags, "会话")
+	}
+
+	return tags
+}
+
+// handleGetAPIGroups 获取API分组信息
+func (m *ServerManager) handleGetAPIGroups(c echo.Context) error {
+	groups := map[string]interface{}{
+		"调试接口": map[string]interface{}{
+			"description": "用于调试和测试的API接口",
+			"endpoints":   []string{"/api/debug/apis", "/api/debug/apis/test"},
+		},
+		"工作空间管理": map[string]interface{}{
+			"description": "管理工作空间的相关接口",
+			"endpoints":   []string{"/api/workspaces", "/api/workspaces/:id"},
+		},
+		"服务管理": map[string]interface{}{
+			"description": "管理MCP服务的相关接口",
+			"endpoints":   []string{"/deploy", "/delete", "/services"},
+		},
+		"会话管理": map[string]interface{}{
+			"description": "管理用户会话的相关接口",
+			"endpoints":   []string{"/api/workspaces/:workspace/sessions"},
+		},
+		"通信接口": map[string]interface{}{
+			"description": "处理消息和事件流的接口",
+			"endpoints":   []string{"/sse", "/message"},
+		},
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"groups":       groups,
+		"total_groups": len(groups),
+	})
+}
+
+// handleTestAPI 测试API端点
+func (m *ServerManager) handleTestAPI(c echo.Context) error {
+	logger := xlog.NewLogger("[APITest]")
+
+	var req APITestRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, APITestResponse{
+			Success: false,
+			Error:   "Invalid request format: " + err.Error(),
+		})
+	}
+
+	if req.Method == "" || req.Path == "" {
+		return c.JSON(http.StatusBadRequest, APITestResponse{
+			Success: false,
+			Error:   "Method and path are required",
+		})
+	}
+
+	logger.Infof("Testing API: %s %s", req.Method, req.Path)
+
+	startTime := time.Now()
+
+	// 构建完整URL
+	scheme := "http"
+	if c.IsTLS() {
+		scheme = "https"
+	}
+	host := c.Request().Host
+	fullURL := fmt.Sprintf("%s://%s%s", scheme, host, req.Path)
+
+	// 添加查询参数
+	if len(req.Query) > 0 {
+		queryParts := []string{}
+		for key, value := range req.Query {
+			queryParts = append(queryParts, fmt.Sprintf("%s=%s", key, value))
+		}
+		fullURL += "?" + strings.Join(queryParts, "&")
+	}
+
+	// 准备请求体
+	var bodyReader io.Reader
+	var requestBodyStr string
+	if req.Body != nil && len(req.Body) > 0 {
+		bodyBytes, err := json.Marshal(req.Body)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, APITestResponse{
+				Success: false,
+				Error:   "Failed to marshal request body: " + err.Error(),
+			})
+		}
+		bodyReader = bytes.NewReader(bodyBytes)
+		requestBodyStr = string(bodyBytes)
+	}
+
+	// 创建HTTP请求
+	httpReq, err := http.NewRequest(req.Method, fullURL, bodyReader)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, APITestResponse{
+			Success: false,
+			Error:   "Failed to create request: " + err.Error(),
+		})
+	}
+
+	// 设置头部
+	if req.ContentType != "" {
+		httpReq.Header.Set("Content-Type", req.ContentType)
+	} else if req.Body != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+
+	// 复制原始请求的授权头部
+	if auth := c.Request().Header.Get("Authorization"); auth != "" {
+		httpReq.Header.Set("Authorization", auth)
+	}
+
+	// 添加自定义头部
+	for key, value := range req.Headers {
+		httpReq.Header.Set(key, value)
+	}
+
+	// 记录请求头部
+	requestHeaders := make(map[string]string)
+	for key, values := range httpReq.Header {
+		if len(values) > 0 {
+			requestHeaders[key] = values[0]
+		}
+	}
+
+	// 发送请求
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(httpReq)
+	responseTime := time.Since(startTime)
+
+	if err != nil {
+		return c.JSON(http.StatusOK, APITestResponse{
+			Success:        false,
+			Error:          "Request failed: " + err.Error(),
+			ResponseTime:   responseTime,
+			RequestHeaders: requestHeaders,
+			RequestBody:    requestBodyStr,
+		})
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return c.JSON(http.StatusOK, APITestResponse{
+			Success:        false,
+			StatusCode:     resp.StatusCode,
+			Error:          "Failed to read response: " + err.Error(),
+			ResponseTime:   responseTime,
+			RequestHeaders: requestHeaders,
+			RequestBody:    requestBodyStr,
+		})
+	}
+
+	responseBodyStr := string(responseBody)
+
+	// 尝试解析JSON响应
+	var responseData map[string]interface{}
+	if err := json.Unmarshal(responseBody, &responseData); err != nil {
+		// 如果不是JSON，作为字符串处理
+		responseData = map[string]interface{}{
+			"raw_response": responseBodyStr,
+		}
+	}
+
+	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+
+	response := APITestResponse{
+		Success:        success,
+		StatusCode:     resp.StatusCode,
+		ResponseTime:   responseTime,
+		Response:       responseData,
+		RequestHeaders: requestHeaders,
+		RequestBody:    requestBodyStr,
+		ResponseBody:   responseBodyStr,
+	}
+
+	if !success {
+		response.Error = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+
+	logger.Infof("API test completed: %s %s - Status: %d, Time: %v",
+		req.Method, req.Path, resp.StatusCode, responseTime)
+
+	return c.JSON(http.StatusOK, response)
 }

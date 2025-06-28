@@ -31,7 +31,6 @@ import {
   PlayArrow as ConnectIcon,
   Stop as DisconnectIcon,
   Clear as ClearIcon,
-  Save as SaveIcon,
   Code as CodeIcon,
 } from '@mui/icons-material';
 import {
