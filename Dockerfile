@@ -2,10 +2,14 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go env -w GO111MODULE=on && \
+    go env -w GOPROXY=https://goproxy.cn,direct && \
+    go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server
+
+FROM node:20-alpine
 
 RUN apk add --update --no-cache git
 
