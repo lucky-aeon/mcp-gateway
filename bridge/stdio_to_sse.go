@@ -223,6 +223,12 @@ func (b *StdioToSSEBridge) Close() error {
 		b.logger.Debug("Stdio client closed")
 	}
 
+	err := b.SSEServer.Shutdown(context.Background())
+	if err != nil {
+		b.logger.Error("Failed to shutdown SSE server", "error", err)
+		return fmt.Errorf("failed to shutdown SSE server: %w", err)
+	}
+
 	b.logger.Info("SSE bridge closed successfully")
 	return nil
 }

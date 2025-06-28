@@ -67,7 +67,7 @@ func (m *ServerManager) handleGlobalSSE(c echo.Context) error {
 
 	// 获取事件通道和关闭函数
 	eventChan, closeChan := session.GetEventChanWithCloser()
-	
+
 	// 转发所有SSE事件
 	for {
 		select {

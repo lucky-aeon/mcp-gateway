@@ -342,27 +342,21 @@ func (s *Session) SendEvent(event SessionMsg) {
 	}
 }
 
-// broadcastEvent 并发广播事件到所有通道
+// broadcastEvent 顺序广播事件到所有通道，避免为每个channel创建goroutine
 func (s *Session) broadcastEvent(eventChans []chan SessionMsg, event SessionMsg, xl xlog.Logger) int {
-	sentCount := int32(0)
-	var wg sync.WaitGroup
+	sentCount := 0
 
 	for i, eventChan := range eventChans {
-		wg.Add(1)
-		go func(chanIndex int, ch chan SessionMsg) {
-			defer wg.Done()
-			select {
-			case ch <- event:
-				atomic.AddInt32(&sentCount, 1)
-				xl.Debugf("Sent event to channel %d", chanIndex)
-			default:
-				xl.Warnf("Channel %d is full, dropping event", chanIndex)
-			}
-		}(i, eventChan)
+		select {
+		case eventChan <- event:
+			sentCount++
+			xl.Debugf("Sent event to channel %d", i)
+		default:
+			xl.Warnf("Channel %d is full, dropping event", i)
+		}
 	}
 
-	wg.Wait()
-	return int(sentCount)
+	return sentCount
 }
 
 // GetEventChan 获取事件通道
@@ -531,26 +525,8 @@ func (s *Session) handleToolsListRequest(xl xlog.Logger, request mcp.JSONRPCRequ
 	// 设置等待计数
 	s.pendingToolsList.Add(len(mcpNames))
 
-	// 启动后台goroutine等待所有响应完成
-	go s.waitForAllToolsResponses(xl, request.ID)
-
-	// 向所有MCP发送工具列表请求
-	for _, mcpName := range mcpNames {
-		go func(name McpName) {
-			defer func() {
-				if r := recover(); r != nil {
-					xl.Errorf("Panic in tools list request for %s: %v", name, r)
-					s.pendingToolsList.Done()
-				}
-			}()
-
-			err := s.sendToolsListToMcp(xl, name, request)
-			if err != nil {
-				xl.Errorf("Failed to send tools list request to %s: %v", name, err)
-				s.pendingToolsList.Done()
-			}
-		}(mcpName)
-	}
+	// 使用单个goroutine处理所有工具列表请求和响应聚合
+	go s.handleAllToolsRequests(xl, request.ID, mcpNames, request)
 
 	return nil
 }
@@ -600,9 +576,19 @@ func (s *Session) sendToolsListToMcp(xl xlog.Logger, mcpName McpName, baseReq mc
 	return nil
 }
 
-// waitForAllToolsResponses 等待所有MCP的工具列表响应完成，然后聚合并发送结果
-func (s *Session) waitForAllToolsResponses(xl xlog.Logger, requestId interface{}) {
-	xl.Info("Waiting for all MCP tools list responses...")
+// handleAllToolsRequests 在单个goroutine中处理所有工具列表请求和响应聚合
+func (s *Session) handleAllToolsRequests(xl xlog.Logger, requestId interface{}, mcpNames []McpName, request mcp.JSONRPCRequest) {
+	xl.Info("Processing all MCP tools list requests...")
+
+	// 顺序向所有MCP发送工具列表请求
+	for _, mcpName := range mcpNames {
+		if err := s.sendToolsListToMcp(xl, mcpName, request); err != nil {
+			xl.Errorf("Failed to send tools list request to %s: %v", mcpName, err)
+			// 如果发送失败，需要手动调用Done来平衡WaitGroup
+			s.pendingToolsList.Done()
+		}
+		// sendToolsListToMcp内部已经调用了Done()，这里不需要重复调用
+	}
 
 	// 等待所有MCP响应完成（带超时）
 	done := make(chan struct{})

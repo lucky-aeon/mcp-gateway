@@ -136,7 +136,8 @@ func (s *McpService) Stop(logger xlog.Logger) (err error) {
 // Start 启动服务
 func (s *McpService) Start(logger xlog.Logger) error {
 	if s.IsSSE() {
-		return fmt.Errorf("服务 %s 不是命令类型, 无需启动", s.Name)
+		logger.Infof("服务 %s 是 SSE 类型，无需启动进程", s.Name)
+		return nil
 	}
 
 	s.mutex.Lock()
@@ -250,6 +251,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 // Restart 重启服务
 func (s *McpService) Restart(logger xlog.Logger) {
 	if s.IsSSE() {
+		logger.Infof("服务 %s 是 SSE 类型，无需重启进程", s.Name)
 		return
 	}
 
@@ -280,10 +282,10 @@ func (s *McpService) Restart(logger xlog.Logger) {
 		s.LastError = fmt.Sprintf("Failed to restart: %v", err)
 		if s.RetryCount > 0 {
 			s.FailureReason = fmt.Sprintf("Restart attempt %d/%d failed", s.RetryMax-s.RetryCount, s.RetryMax)
-			go func() {
-				time.Sleep(5 * time.Second)
+			// 使用定时器而不是goroutine来延时重启
+			time.AfterFunc(5*time.Second, func() {
 				s.Restart(logger)
-			}()
+			})
 		} else {
 			s.Status = Failed
 			s.FailureReason = "All restart attempts failed"
