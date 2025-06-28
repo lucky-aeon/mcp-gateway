@@ -34,7 +34,7 @@ func (m *ServerManager) handleGlobalMessage(c echo.Context) error {
 	}
 
 	// 记录发送的消息
-	session.SendMessage(xl, string(body))
+	session.SendMessage(xl, []byte(body))
 
 	return c.String(http.StatusOK, "Accepted")
 }

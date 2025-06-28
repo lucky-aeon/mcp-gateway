@@ -74,7 +74,7 @@ func NewStdioToSSEBridge(ctx context.Context, transport *transport.Stdio, mcpNam
 
 	// 4. 设置资源桥接（如果支持的话）
 	if err := bridge.setupResourceBridge(ctx); err != nil {
-		bridge.logger.Warn("Resource bridging failed (server may not support resources)", "error", err)
+		bridge.logger.Warnf("Resource bridging failed (server may not support resources): %v", err)
 		// 不返回错误，继续启动服务器
 	}
 
@@ -136,7 +136,6 @@ func (b *StdioToSSEBridge) setupResourceBridge(ctx context.Context) error {
 	resourcesRequest := mcp.ListResourcesRequest{}
 	resourcesResult, err := b.stdioClient.ListResources(ctx, resourcesRequest)
 	if err != nil {
-		b.logger.Error("Failed to list resources from stdio server", "error", err)
 		return fmt.Errorf("failed to list resources from stdio server: %w", err)
 	}
 

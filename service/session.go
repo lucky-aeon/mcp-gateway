@@ -3,10 +3,9 @@
 package service
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,7 +13,8 @@ import (
 
 	"github.com/lucky-aeon/agentx/plugin-helper/types"
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
-	"github.com/tidwall/gjson"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 type McpName = string
@@ -31,32 +31,28 @@ type Session struct {
 	eventChans []chan SessionMsg
 	doneChan   chan struct{}
 
-	// SSE订阅 - 由主锁保护
-	sseWaitGroup sync.WaitGroup
-	sseConns     map[McpName]*http.Response // 存储SSE连接，用于关闭
-	sseCount     atomic.Int32
-
-	// 消息相关 - 由主锁保护
-	mcpMessageUrl map[McpName]string
-	messageIds    map[int64]int64
-
 	// 工具映射 - 由主锁保护
 	mcpToolsMap    map[McpName]map[McpToolName]types.McpTool
 	waitToolsCount atomic.Int32
 
 	// 避免重复返回 - 由主锁保护
 	lastMsg SessionMsg
+
+	// V2
+	mcpClients           map[McpName]client.MCPClient
+	mcpinitializeResults map[McpName]*mcp.InitializeResult
 }
 
 func NewSession(id string) *Session {
 	return &Session{
-		Id:              id,
-		LastReceiveTime: time.Now(),
-		mcpMessageUrl:   make(map[McpName]string),
-		messageIds:      make(map[int64]int64),
-		mcpToolsMap:     make(map[McpName]map[McpToolName]types.McpTool),
-		waitToolsCount:  atomic.Int32{},
-		sseConns:        make(map[McpName]*http.Response),
+		Id:                   id,
+		LastReceiveTime:      time.Now(),
+		eventChans:           make([]chan SessionMsg, 0),
+		doneChan:             make(chan struct{}),
+		mcpToolsMap:          make(map[McpName]map[McpToolName]types.McpTool),
+		waitToolsCount:       atomic.Int32{},
+		mcpClients:           make(map[McpName]client.MCPClient),
+		mcpinitializeResults: make(map[McpName]*mcp.InitializeResult),
 	}
 }
 
@@ -64,9 +60,9 @@ func (s *Session) GetId() string {
 	return s.Id
 }
 
-func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
+func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err error) {
 	// 发送消息到 MCP 服务
-	var request types.McpRequest
+	var request mcp.JSONRPCRequest
 	if err = json.Unmarshal([]byte(content), &request); err != nil {
 		xl.Errorf("failed to unmarshal request: %v", err)
 		return fmt.Errorf("failed to unmarshal request: %w", err)
@@ -74,37 +70,24 @@ func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
 	method := request.Method
 	xl = xlog.WithChildName(method, xl)
 
-	xl.Debugf("Sending request: %v", content)
-
-	// check is ok
-	try := 3
-	for !s.IsReady() {
-		if try < 0 {
-			return fmt.Errorf("service not ready")
-		}
-		time.Sleep(time.Second)
-		try--
-	}
+	xl.Debugf("Sending request: %+v", request)
 
 	// xl.Infof("method: %s, content: %s", method, content)
 	var singleMcp McpName
-	if method == "tools/call" {
+	switch mcp.MCPMethod(request.Method) {
+	case mcp.MethodToolsCall:
+		req := mcp.CallToolRequest{}
+		err := json.Unmarshal([]byte(content), &req)
+		if err != nil {
+			xl.Errorf("failed to unmarshal request: %v", err)
+			return fmt.Errorf("failed to unmarshal request: %w", err)
+		}
 
-		params, ok := request.Params.(map[string]any)
-		if !ok {
-			xl.Errorf("failed to get params")
-			return fmt.Errorf("failed to get params")
-		}
-		name, ok := params["name"].(string)
-		if !ok {
-			xl.Errorf("failed to get name")
-			return fmt.Errorf("failed to get name")
-		}
-		if names := strings.Split(name, "_"); len(names) > 1 {
+		// mcpName_toolName  ->  toolName
+		if names := strings.Split(req.Params.Name, "_"); len(names) > 2 {
 			singleMcp = names[0]
-			params["name"] = strings.Join(names[1:], "_")
+			req.Params.Name = strings.Join(names[1:], "_")
 		}
-		request.Params = params
 	}
 
 	// 对所有 MCP 服务器发送消息
@@ -115,12 +98,17 @@ func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
 		}
 		s.mu.Lock()
 		s.mcpToolsMap = make(map[McpName]map[McpToolName]types.McpTool)
+		mcpNames := make([]McpName, 0, len(s.mcpClients))
+		for mcpName := range s.mcpClients {
+			mcpNames = append(mcpNames, mcpName)
+		}
 		s.mu.Unlock()
-		for mcpName := range s.mcpMessageUrl {
+
+		for _, mcpName := range mcpNames {
 			if method == "tools/list" {
 				s.waitToolsCount.Add(1)
 			}
-			err = s.sendToMcp(xl, mcpName, request)
+			err = s.sendToMcp(xl, mcpName, request, content)
 			if err != nil {
 				xl.Errorf("failed to send to allmcp: %v", err)
 				continue
@@ -128,7 +116,7 @@ func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
 		}
 	} else {
 		// xl.Infof("send to single MCP server: %s, content: %s", singleMcp, content)
-		err = s.sendToMcp(xl, singleMcp, request)
+		err = s.sendToMcp(xl, singleMcp, request, content)
 		if err != nil {
 			xl.Errorf("failed to send to singlemcp: %v", err)
 			return err
@@ -138,202 +126,188 @@ func (s *Session) SendMessage(xl xlog.Logger, content string) (err error) {
 	return nil
 }
 
-func (s *Session) generateMessageId(realMessageId int64) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// 生成唯一的消息ID
-	now := int64(time.Now().UnixMilli())
-
-	xlog.NewLogger("session-"+s.Id).Debugf("generate message id: %d, real message id: %d", now, realMessageId)
-	s.messageIds[now] = realMessageId
-	return now
-}
-
-func (s *Session) getRealMessageId(messageId int64) (int64, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	realMessageId, exists := s.messageIds[messageId]
-	return realMessageId, exists
-}
-
-func (s *Session) removeMessageId(messageId int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.messageIds, messageId)
-}
-
-func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, request types.McpRequest) error {
+func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPCRequest, reqRaw json.RawMessage) error {
 	xl = xlog.WithChildName(mcpName, xl)
 	// 发送消息到 MCP 服务
-	// 生成唯一的消息ID
-	if request.Id != nil {
-		id := s.generateMessageId(*request.Id)
-		// 替换消息中的ID
-		request.Id = &id
-	}
-
-	mcpMessageUrl, ok := s.mcpMessageUrl[mcpName]
+	s.mu.RLock()
+	mCli, ok := s.mcpClients[mcpName]
+	s.mu.RUnlock()
 	if !ok {
-		err := fmt.Errorf("failed to find mcpMessageUrl for %s", mcpName)
+		err := fmt.Errorf("failed to find mcpClient for %s", mcpName)
 		xl.Error(err)
 		return err
 	}
-	// xl.Debugf("Sending message to %s: %s", mcpName, content)
-	resp, err := http.Post(mcpMessageUrl, "application/json", strings.NewReader(request.ToJson()))
-	if err != nil {
-		xl.Errorf("failed to send message: %v", err)
-		return fmt.Errorf("failed to send message: %v", err)
-	}
-	defer resp.Body.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		xl.Errorf("failed to send message, status code: %d", resp.StatusCode)
-		return fmt.Errorf("failed to send message, status code: %d", resp.StatusCode)
+	var result interface{}
+	var err error
+
+	switch mcp.MCPMethod(baseReq.Method) {
+	case mcp.MethodInitialize:
+		result = s.mcpinitializeResults[mcpName]
+
+	case mcp.MethodPing:
+		var request mcp.PingRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal ping request: %v", err)
+			return err
+		}
+		err = mCli.Ping(ctx)
+		result = &mcp.EmptyResult{}
+
+	case mcp.MethodSetLogLevel:
+		var request mcp.SetLevelRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal setLogLevel request: %v", err)
+			return err
+		}
+		err = mCli.SetLevel(ctx, request)
+		result = &mcp.EmptyResult{}
+
+	case mcp.MethodResourcesList:
+		var request mcp.ListResourcesRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal listResources request: %v", err)
+			return err
+		}
+		result, err = mCli.ListResources(ctx, request)
+
+	case mcp.MethodResourcesTemplatesList:
+		var request mcp.ListResourceTemplatesRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal listResourceTemplates request: %v", err)
+			return err
+		}
+		result, err = mCli.ListResourceTemplates(ctx, request)
+
+	case mcp.MethodResourcesRead:
+		var request mcp.ReadResourceRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal readResource request: %v", err)
+			return err
+		}
+		result, err = mCli.ReadResource(ctx, request)
+
+	case mcp.MethodPromptsList:
+		var request mcp.ListPromptsRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal listPrompts request: %v", err)
+			return err
+		}
+		result, err = mCli.ListPrompts(ctx, request)
+
+	case mcp.MethodPromptsGet:
+		var request mcp.GetPromptRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal getPrompt request: %v", err)
+			return err
+		}
+		result, err = mCli.GetPrompt(ctx, request)
+
+	case mcp.MethodToolsList:
+		var request mcp.ListToolsRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal listTools request: %v", err)
+			return err
+		}
+		result, err = mCli.ListTools(ctx, request)
+
+		// 处理工具列表响应，更新工具映射
+		if err == nil {
+			if toolsResult, ok := result.(*mcp.ListToolsResult); ok {
+				s.mu.Lock()
+				if s.mcpToolsMap[mcpName] == nil {
+					s.mcpToolsMap[mcpName] = make(map[McpToolName]types.McpTool)
+				}
+				for _, tool := range toolsResult.Tools {
+					s.mcpToolsMap[mcpName][tool.Name] = types.McpTool{
+						Name:        tool.Name,
+						Description: tool.Description,
+						InputSchema: tool.InputSchema,
+					}
+				}
+				s.mu.Unlock()
+				s.waitToolsCount.Add(-1)
+			}
+		}
+
+	case mcp.MethodToolsCall:
+		var request mcp.CallToolRequest
+		err = json.Unmarshal(reqRaw, &request)
+		if err != nil {
+			xl.Errorf("failed to unmarshal callTool request: %v", err)
+			return err
+		}
+		result, err = mCli.CallTool(ctx, request)
+
+	default:
+		return fmt.Errorf("unsupported method: %s", baseReq.Method)
 	}
+
+	if err != nil {
+		xl.Errorf("failed to call MCP method %s: %v", baseReq.Method, err)
+		// 发送错误响应
+		s.sendErrorResponse(mcpName, baseReq.ID, err)
+		return err
+	}
+
+	// 发送成功响应
+	if result != nil {
+		s.sendSuccessResponse(mcpName, baseReq.ID, result)
+	}
+
 	return nil
 }
 
-func (s *Session) IsReady() bool {
-	load := int(s.sseCount.Load())
-	mcpUrls := len(s.mcpMessageUrl)
-	return load == mcpUrls
-}
-
 // SubscribeSSE 订阅MCP服务的SSE事件
-func (s *Session) SubscribeSSE(mcpName McpName, sseUrl string) (err error) {
-	s.sseWaitGroup.Add(1)
-	s.sseCount.Add(1)
-	xl := xlog.WithChildName(s.Id, xlog.NewLogger("SSE-RECEIVE-"+string(mcpName)))
-
-	xl.Infof("Subscribing to SSE: %s", sseUrl)
-	resp, err := http.Get(sseUrl)
+func (s *Session) SubscribeSSE(xl xlog.Logger, mcpName McpName, sseUrl string) (err error) {
+	cli, err := client.NewSSEMCPClient(sseUrl)
 	if err != nil {
-		xl.Errorf("failed to subscribe SSE: %v", err)
-		return err
+		xl.Errorf("failed to create SSE client: %v", err)
+		return fmt.Errorf("failed to create SSE client: %v", err)
 	}
-	// 保存连接以便后续关闭
+
+	err = cli.Start(context.TODO())
+	if err != nil {
+		xl.Errorf("failed to start SSE client: %v", err)
+		return fmt.Errorf("failed to start SSE client: %v", err)
+	}
+
+	result, err := cli.Initialize(context.TODO(), mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "test-sse-client",
+				Version: "1.0.0",
+			},
+		},
+	})
+	if err != nil {
+		xl.Errorf("failed to initialize SSE client: %v", err)
+		return fmt.Errorf("failed to initialize SSE client: %v", err)
+	}
+	s.mcpinitializeResults[mcpName] = result
+
+	xl.Info("initialized SSE client: ", result)
+
+	err = cli.Ping(context.TODO())
+	if err != nil {
+		xl.Errorf("failed to ping SSE client: %v", err)
+		return fmt.Errorf("failed to ping SSE client: %v", err)
+	}
+
 	s.mu.Lock()
-	s.sseConns[mcpName] = resp
+	s.mcpClients[mcpName] = cli
 	s.mu.Unlock()
-
-	go func() {
-		defer func() {
-			s.sseWaitGroup.Done()
-			s.sseCount.Add(-1)
-		}()
-
-		defer func() {
-			s.mu.Lock()
-			if err := resp.Body.Close(); err != nil {
-				xl.Errorf("failed to close SSE: %v", err)
-			}
-			s.mu.Unlock()
-		}()
-
-		reader := bufio.NewReader(resp.Body)
-		var currentEvent string
-
-		for {
-			select {
-			case <-s.doneChan:
-				if err := resp.Body.Close(); err != nil {
-					xl.Errorf("failed to close SSE: %v", err)
-				}
-				xl.Infof("Closed SSE subscription: %s", sseUrl)
-				return
-			default:
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					xl.Errorf("failed to read SSE: %v", err)
-					return
-				}
-				line = strings.TrimSpace(line)
-
-				if line == "" {
-					continue
-				}
-
-				if strings.HasPrefix(line, "event: ") {
-					currentEvent = strings.TrimPrefix(line, "event: ")
-				} else if strings.HasPrefix(line, "data: ") {
-					data := strings.TrimPrefix(line, "data: ")
-					// 如果是endpoint事件，保存endpoint
-					if currentEvent == "endpoint" && s.mcpMessageUrl[mcpName] == "" {
-						xl.Infof("Add SSE endpoint: %s", data)
-						s.mcpMessageUrl[mcpName] = fmt.Sprintf("%s://%s%s", resp.Request.URL.Scheme, resp.Request.Host, data)
-					}
-
-					curMsg := SessionMsg{Event: currentEvent, Data: data}
-					if gjson.Get(data, "id").Exists() {
-						messageId := gjson.Get(data, "id").Int()
-						// 检查是否是当前会话的消息
-						realMessage, exists := s.getRealMessageId(messageId)
-						curMsg.proxyId, curMsg.clientId = messageId, realMessage
-						xl.Debugf("recevied: id(%d), clientId(%d)", messageId, realMessage)
-						if !exists {
-							continue
-						}
-						xl.Infof("SSE received(%s): %s", currentEvent, data)
-						s.removeMessageId(messageId)
-						// 将消息ID替换为当前会话ID
-						data = strings.Replace(data, fmt.Sprintf(`"id":%d`, messageId), fmt.Sprintf(`"id":%d`, realMessage), 1)
-
-						// 获取tools
-						if tools := gjson.Get(data, "result.tools").Array(); len(tools) > 0 {
-							isContinue := func() bool {
-								s.mu.Lock()
-								defer s.mu.Unlock()
-								s.mcpToolsMap[mcpName] = make(map[McpToolName]types.McpTool)
-								for _, toolJ := range tools {
-									var tool types.McpTool
-									if err := json.Unmarshal([]byte(toolJ.Raw), &tool); err != nil {
-										xl.Errorf("Failed to unmarshal tool: %v", err)
-										return false
-									}
-									tool.RealName = tool.Name
-									tool.Name = fmt.Sprintf("%s_%s", mcpName, tool.Name)
-									s.mcpToolsMap[mcpName][McpToolName(tool.RealName)] = tool
-								}
-								if s.waitToolsCount.Add(-1) > 0 {
-									// 还没有准备好，继续等待
-									xl.Debugf("Waiting for tools to be ready in session %s", s.Id)
-									return false
-								}
-								xl.Debugf("Tools ready in session %s", s.Id)
-								// 工具准备好，通知客户端
-								allTools := make([]types.McpTool, 0, len(s.mcpToolsMap))
-								for _, tools := range s.mcpToolsMap {
-									for _, tool := range tools {
-										allTools = append(allTools, tool)
-									}
-								}
-								newResult := types.CreateMcpResult(gjson.Get(data, "jsonrpc").String(), int64(realMessage), map[string]any{"tools": allTools})
-								data = newResult.ToJson()
-								return true
-							}()
-							if !isContinue {
-								continue
-							}
-						} else if get := gjson.Get(data, "result.serverInfo.name"); get.Exists() {
-							// handler mcpname
-							xl.Infof("replace mcpName: %s", get.String())
-							data = strings.Replace(data, get.String(), "mcp-gateway", 1)
-						}
-
-						//
-						// 记录接收到的消息
-						// s.AddMessage(mcpName, data, "receive")
-
-						// 如果不是endpoint事件，转发给客户端
-						if currentEvent != "endpoint" {
-							curMsg.Data = data
-							s.SendEvent(curMsg)
-						}
-					}
-				}
-			}
-		}
-	}()
 	return nil
 }
 
@@ -364,14 +338,6 @@ func (s *Session) Close() {
 	xl := xlog.NewLogger("session-" + s.Id)
 	xl.Infof("Closing session: %s", s.Id)
 	xl.Infof("Closing all SSE connections")
-	for _, conn := range s.sseConns {
-		xl.Infof("Closing SSE connection: %s", conn.Request.URL.String())
-		if err := conn.Body.Close(); err != nil {
-			xl.Errorf("failed to close SSE connection: %v", err)
-		}
-	}
-
-	s.sseWaitGroup.Wait() // 等待所有SSE订阅goroutine结束
 
 	xl.Infof("Session closed: %s", s.Id)
 }
@@ -379,7 +345,7 @@ func (s *Session) Close() {
 // SendEvent 发送SSE事件
 func (s *Session) SendEvent(event SessionMsg) {
 	xl := xlog.NewLogger("session-" + s.Id)
-	xl.Infof("Sending event: %s", event)
+	xl.Debugf("Sending event: %s", event)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -433,6 +399,71 @@ func (s *Session) GetMcpTool(mcpName McpName, toolName McpToolName) (types.McpTo
 		}
 	}
 	return types.McpTool{}, false
+}
+
+// sendSuccessResponse 发送成功响应到SSE
+func (s *Session) sendSuccessResponse(mcpName McpName, requestId interface{}, result interface{}) {
+	// Convert interface{} to RequestId
+	var reqId mcp.RequestId
+	if requestId != nil {
+		reqId = mcp.NewRequestId(requestId)
+	}
+
+	response := mcp.JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      reqId,
+		Result:  result,
+	}
+
+	responseData, err := json.Marshal(response)
+	if err != nil {
+		xl := xlog.NewLogger("session-" + s.Id)
+		xl.Errorf("failed to marshal response: %v", err)
+		return
+	}
+
+	// 发送SSE事件
+	event := SessionMsg{
+		Event: "message",
+		Data:  string(responseData),
+	}
+	s.SendEvent(event)
+}
+
+// sendErrorResponse 发送错误响应到SSE
+func (s *Session) sendErrorResponse(mcpName McpName, requestId interface{}, err error) {
+	// Convert interface{} to RequestId
+	var reqId mcp.RequestId
+	if requestId != nil {
+		reqId = mcp.NewRequestId(requestId)
+	}
+
+	response := mcp.JSONRPCError{
+		JSONRPC: "2.0",
+		ID:      reqId,
+		Error: struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    any    `json:"data,omitempty"`
+		}{
+			Code:    mcp.INTERNAL_ERROR,
+			Message: err.Error(),
+		},
+	}
+
+	responseData, jsonErr := json.Marshal(response)
+	if jsonErr != nil {
+		xl := xlog.NewLogger("session-" + s.Id)
+		xl.Errorf("failed to marshal error response: %v", jsonErr)
+		return
+	}
+
+	// 发送SSE事件
+	event := SessionMsg{
+		Event: "message",
+		Data:  string(responseData),
+	}
+	s.SendEvent(event)
 }
 
 func (s *Session) ping() {

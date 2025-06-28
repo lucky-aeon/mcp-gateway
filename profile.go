@@ -50,6 +50,10 @@ func StopCPUProfile(f *os.File) {
 
 // WriteMemProfile 写入内存性能分析
 func WriteMemProfile(filename string) {
+	if !startProfile {
+		return
+	}
+
 	logger := xlog.NewLogger("PROFILE")
 
 	f, err := os.Create(filename)
@@ -70,6 +74,10 @@ func WriteMemProfile(filename string) {
 
 // WriteGoroutineProfile 写入协程性能分析
 func WriteGoroutineProfile(filename string) {
+	if !startProfile {
+		return
+	}
+
 	logger := xlog.NewLogger("PROFILE")
 
 	f, err := os.Create(filename)

@@ -16,7 +16,6 @@ type SessionInfo struct {
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
 	LastReceiveTime time.Time `json:"last_receive_time"`
-	IsReady         bool      `json:"is_ready"`
 }
 
 // handleGetWorkspaceSessions 获取工作空间的会话
@@ -53,7 +52,6 @@ func (m *ServerManager) handleCreateSession(c echo.Context) error {
 		Status:          "active",
 		CreatedAt:       time.Now(),
 		LastReceiveTime: session.LastReceiveTime,
-		IsReady:         session.IsReady(),
 	}
 
 	return c.JSON(http.StatusCreated, sessionInfo)
@@ -96,7 +94,6 @@ func (m *ServerManager) handleGetSessionStatus(c echo.Context) error {
 				Status:          "active",
 				CreatedAt:       time.Now(), // TODO: 需要从 session 获取实际创建时间
 				LastReceiveTime: session.LastReceiveTime,
-				IsReady:         session.IsReady(),
 			}
 			return c.JSON(http.StatusOK, sessionInfo)
 		}
