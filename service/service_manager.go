@@ -2,12 +2,14 @@ package service
 
 import (
 	"github.com/lucky-aeon/agentx/plugin-helper/config"
+	"github.com/lucky-aeon/agentx/plugin-helper/errs"
 	"github.com/lucky-aeon/agentx/plugin-helper/xlog"
 )
 
 type ServiceManagerI interface {
 	DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) (AddMcpServiceResult, error)
 	StopServer(logger xlog.Logger, name NameArg)
+	RestartServer(logger xlog.Logger, name NameArg) error
 	ListServerConfig(logger xlog.Logger, name NameArg) map[string]config.MCPServerConfig
 	GetMcpService(logger xlog.Logger, name NameArg) (ExportMcpService, error)
 	GetMcpServices(logger xlog.Logger, name NameArg) map[string]ExportMcpService
@@ -53,6 +55,19 @@ func (s *ServiceManager) StopServer(logger xlog.Logger, name NameArg) {
 	if err := workspace.StopMcpService(logger, name.Server); err != nil {
 		logger.Errorf("Failed to stop server %s: %v", name.Server, err)
 	}
+}
+
+func (s *ServiceManager) RestartServer(logger xlog.Logger, name NameArg) error {
+	workspace, ok := s.getWorkspace(logger, name.Workspace)
+	if !ok {
+		logger.Errorf("workspace %s not found", name.Workspace)
+		return errs.ErrWorkspaceNotFound
+	}
+	if err := workspace.RestartMcpService(logger, name.Server); err != nil {
+		logger.Errorf("Failed to restart server %s: %v", name.Server, err)
+		return err
+	}
+	return nil
 }
 
 func (s *ServiceManager) ListServerConfig(logger xlog.Logger, name NameArg) map[string]config.MCPServerConfig {

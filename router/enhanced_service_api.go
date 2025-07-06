@@ -80,26 +80,10 @@ func (m *ServerManager) handleRestartService(c echo.Context) error {
 	serviceName := c.Param("name")
 	xl.Infof("Restart service %s in workspace: %s", serviceName, workspaceID)
 
-	// 先停止服务
-	m.mcpServiceMgr.StopServer(xl, service.NameArg{
+	if err := m.mcpServiceMgr.RestartServer(xl, service.NameArg{
 		Workspace: workspaceID,
 		Server:    serviceName,
-	})
-
-	// 获取服务配置
-	configs := m.mcpServiceMgr.ListServerConfig(xl, service.NameArg{
-		Workspace: workspaceID,
-	})
-
-	config, ok := configs[serviceName]
-	if !ok {
-		return c.JSON(http.StatusNotFound, map[string]string{
-			"error": "Service not found",
-		})
-	}
-
-	// 重新部署服务
-	if _, err := m.DeployServer(serviceName, config); err != nil {
+	}); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})

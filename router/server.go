@@ -85,13 +85,17 @@ func (m *ServerManager) loadConfig() error {
 		return err
 	}
 
-	for name, srv := range config {
-		xl.Infof("Loading server %s: %v", name, srv)
-		if _, err := m.DeployServer(name, srv); err != nil {
-			xl.Errorf("Error deploying server %s: %v", name, err)
+	xl.Infof("Async Loading %d servers", len(config))
+	go func() {
+		for name, srv := range config {
+			xl.Infof("Loading server %s: %v", name, srv)
+			if _, err := m.DeployServer(name, srv); err != nil {
+				xl.Errorf("Error deploying server %s: %v", name, err)
+			}
 		}
-	}
-	xl.Infof("Loaded %d servers", len(config))
+		xl.Infof("Loaded %d servers", len(config))
+	}()
+
 	return nil
 }
 

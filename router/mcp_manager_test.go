@@ -32,6 +32,11 @@ func (m *MockServiceManager) StopServer(logger xlog.Logger, name service.NameArg
 	m.Called(logger, name)
 }
 
+func (m *MockServiceManager) RestartServer(logger xlog.Logger, name service.NameArg) error {
+	args := m.Called(logger, name)
+	return args.Error(0)
+}
+
 func (m *MockServiceManager) ListServerConfig(logger xlog.Logger, name service.NameArg) map[string]config.MCPServerConfig {
 	args := m.Called(logger, name)
 	return args.Get(0).(map[string]config.MCPServerConfig)

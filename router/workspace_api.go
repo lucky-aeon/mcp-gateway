@@ -118,7 +118,7 @@ func (m *ServerManager) handleGetWorkspaceServices(c echo.Context) error {
 		Workspace: workspaceID,
 	})
 
-	var serviceInfos []service.McpServiceInfo
+	serviceInfos := []service.McpServiceInfo{}
 	for _, svc := range services {
 		serviceInfos = append(serviceInfos, svc.Info())
 	}

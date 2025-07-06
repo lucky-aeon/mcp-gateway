@@ -255,40 +255,45 @@ func (s *McpService) Restart(logger xlog.Logger) {
 		return
 	}
 
+	// 检查重试次数，避免在锁内调用自身
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	if s.RetryCount <= 0 {
 		logger.Warnf("No retry restart count left for %s, marking as failed", s.Name)
 		s.Status = Failed
 		s.FailureReason = "Max retry count reached"
 		s.LastError = "Service failed after maximum retry attempts"
+		s.mutex.Unlock()
 		return
 	}
 
 	s.RetryCount--
-	logger.Infof("Restarting %s (attempt %d/%d)", s.Name, s.RetryMax-s.RetryCount, s.RetryMax)
+	currentAttempt := s.RetryMax - s.RetryCount
+	retryCount := s.RetryCount
+	logger.Infof("Restarting %s (attempt %d/%d)", s.Name, currentAttempt, s.RetryMax)
+	s.mutex.Unlock()
 
-	// 停止当前桥接
-	if s.bridge != nil {
-		if err := s.bridge.Close(); err != nil {
-			logger.Errorf("Failed to stop bridge during restart: %v", err)
-		}
+	if err := s.Stop(logger); err != nil {
+		logger.Errorf("Failed to stop service %s during restart: %v", s.Name, err)
 	}
 
+	// 在锁外调用Start
 	err := s.Start(logger)
 	if err != nil {
 		logger.Errorf("Failed to restart %s: %v", s.Name, err)
+
+		s.mutex.Lock()
 		s.LastError = fmt.Sprintf("Failed to restart: %v", err)
-		if s.RetryCount > 0 {
-			s.FailureReason = fmt.Sprintf("Restart attempt %d/%d failed", s.RetryMax-s.RetryCount, s.RetryMax)
-			// 使用定时器而不是goroutine来延时重启
+		if retryCount > 0 {
+			s.FailureReason = fmt.Sprintf("Restart attempt %d/%d failed", currentAttempt, s.RetryMax)
+			s.mutex.Unlock()
+			// 在锁外延时重启，避免死锁
 			time.AfterFunc(5*time.Second, func() {
 				s.Restart(logger)
 			})
 		} else {
 			s.Status = Failed
 			s.FailureReason = "All restart attempts failed"
+			s.mutex.Unlock()
 		}
 	}
 }
