@@ -175,7 +175,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	logger.Infof("Creating stdio-sse bridge for command: %s %s", s.Config.Command, strings.Join(s.Config.Args, " "))
 
 	// 创建stdio-sse桥接
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	bridgeInstance, err := bridge.NewStdioToSSEBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
