@@ -60,8 +60,8 @@ func NewSSEToHTTPStreamBridge(ctx context.Context, sseBaseURL string, mcpName st
 
 	// 2. 创建 MCP 服务器，作为桥接层
 	mcpServer := server.NewMCPServer(
-		"sse-http-stream-bridge",
-		"1.0.0",
+		initResult.ServerInfo.Name,
+		initResult.ServerInfo.Version,
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),

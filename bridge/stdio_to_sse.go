@@ -53,8 +53,8 @@ func NewStdioToSSEBridge(ctx context.Context, transport *transport.Stdio, mcpNam
 
 	// 2. 创建 MCP 服务器，作为桥接层
 	mcpServer := server.NewMCPServer(
-		"stdio-sse-bridge",
-		"1.0.0",
+		initResult.ServerInfo.Name,
+		initResult.ServerInfo.Version,
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
