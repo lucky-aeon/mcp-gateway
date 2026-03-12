@@ -35,10 +35,10 @@ type WorkSpace struct {
 	sessionMgr  *SessionManager
 }
 
-func NewWorkSpace(workId string, cfg config.WorkspaceConfig, portManager PortManagerI) *WorkSpace {
+func NewWorkSpace(workId string, cfg config.WorkspaceConfig, portManager PortManagerI, sessionConfig sessionCleanupConfig) *WorkSpace {
 	space := &WorkSpace{Id: workId, cfg: cfg, portManager: portManager, servers: make(map[string]*McpService)}
 	// init session manager, it will be used to create session for each workspace
-	space.sessionMgr = NewSessionManager(space)
+	space.sessionMgr = NewSessionManager(space, sessionConfig)
 	return space
 }
 

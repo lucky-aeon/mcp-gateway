@@ -13,10 +13,15 @@ type SessionManager struct {
 	sessions      map[string]*Session
 	sessionsMutex sync.RWMutex
 	curWorkspace  *WorkSpace
+	sessionConfig sessionCleanupConfig
 }
 
-func NewSessionManager(curWorkspace *WorkSpace) *SessionManager {
-	return &SessionManager{curWorkspace: curWorkspace, sessions: make(map[string]*Session)}
+func NewSessionManager(curWorkspace *WorkSpace, sessionConfig sessionCleanupConfig) *SessionManager {
+	return &SessionManager{
+		curWorkspace:  curWorkspace,
+		sessions:      make(map[string]*Session),
+		sessionConfig: normalizeSessionCleanupConfig(sessionConfig),
+	}
 }
 
 // GetSession returns the session with the given id.
@@ -32,7 +37,7 @@ func (m *SessionManager) GetSession(_ xlog.Logger, sessionId string) (*Session, 
 
 // CreateSession creates a new session.
 func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
-	session := NewSession(uuid.New().String())
+	session := newSession(uuid.New().String(), m.sessionConfig)
 	if m.existsSession(session.Id) {
 		xl.Errorf("session %s already exists", session.Id)
 		return nil, fmt.Errorf("session %s already exists", session.Id)

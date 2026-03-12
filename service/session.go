@@ -19,6 +19,28 @@ import (
 type McpName = string
 type McpToolName = string
 
+const (
+	// 无活跃连接时，超过该时间自动释放 session
+	sessionNoConnectionTTL = 1 * time.Minute
+	// session 不活跃检查间隔
+	sessionInactivityCheckInterval = 10 * time.Second
+)
+
+type sessionCleanupConfig struct {
+	noConnectionTTL         time.Duration
+	inactivityCheckInterval time.Duration
+}
+
+func normalizeSessionCleanupConfig(cfg sessionCleanupConfig) sessionCleanupConfig {
+	if cfg.noConnectionTTL <= 0 {
+		cfg.noConnectionTTL = sessionNoConnectionTTL
+	}
+	if cfg.inactivityCheckInterval <= 0 {
+		cfg.inactivityCheckInterval = sessionInactivityCheckInterval
+	}
+	return cfg
+}
+
 type Session struct {
 	// 使用单一主锁减少死锁风险
 	mu sync.RWMutex
@@ -30,6 +52,8 @@ type Session struct {
 	// SSE事件通道 - 由主锁保护
 	eventChans []chan SessionMsg
 	doneChan   chan struct{}
+	// session清理配置
+	cleanupConfig sessionCleanupConfig
 
 	// 清理机制
 	cleanupCallback func(sessionId string) // 清理回调函数
@@ -49,13 +73,19 @@ type Session struct {
 }
 
 func NewSession(id string) *Session {
+	return newSession(id, sessionCleanupConfig{})
+}
+
+func newSession(id string, cleanupConfig sessionCleanupConfig) *Session {
 	now := time.Now()
+	cleanupConfig = normalizeSessionCleanupConfig(cleanupConfig)
 	session := &Session{
 		Id:                   id,
 		CreatedAt:            now,
 		LastReceiveTime:      now,
 		eventChans:           make([]chan SessionMsg, 0),
 		doneChan:             make(chan struct{}),
+		cleanupConfig:        cleanupConfig,
 		mcpToolsMap:          make(map[McpName]map[McpToolName]mcp.Tool),
 		aggregatedTools:      make([]mcp.Tool, 0),
 		toolsListComplete:    atomic.Bool{},
@@ -78,7 +108,7 @@ func (s *Session) SetCleanupCallback(callback func(sessionId string)) {
 
 // startInactivityMonitor 启动不活跃监控
 func (s *Session) startInactivityMonitor() {
-	ticker := time.NewTicker(30 * time.Second) // 每30秒检查一次
+	ticker := time.NewTicker(s.cleanupConfig.inactivityCheckInterval)
 	defer ticker.Stop()
 
 	for {
@@ -100,8 +130,8 @@ func (s *Session) checkInactivity() {
 	sessionId := s.Id
 	s.mu.RUnlock()
 
-	// 如果没有活跃的事件通道且超过5分钟没有活动，则清理session
-	if !hasActiveChans && time.Since(lastActivity) > 5*time.Minute {
+	// 如果没有活跃的事件通道且超过阈值没有活动，则清理 session
+	if !hasActiveChans && time.Since(lastActivity) > s.cleanupConfig.noConnectionTTL {
 		xl := xlog.NewLogger("session-monitor")
 		xl.Infof("Session %s is inactive, triggering cleanup", sessionId)
 
@@ -393,8 +423,7 @@ func (s *Session) GetEventChanWithCloser() (<-chan SessionMsg, func()) {
 // removeEventChan 从事件通道列表中移除指定通道
 func (s *Session) removeEventChan(targetChan chan SessionMsg) {
 	s.mu.Lock()
-	var shouldTriggerCleanup bool
-	var cleanupCallback func(sessionId string)
+	var shouldScheduleCleanup bool
 	var sessionId string
 
 	for i, ch := range s.eventChans {
@@ -407,17 +436,16 @@ func (s *Session) removeEventChan(targetChan chan SessionMsg) {
 
 	// 检查是否所有通道都已关闭
 	if len(s.eventChans) == 0 {
-		shouldTriggerCleanup = true
-		cleanupCallback = s.cleanupCallback
+		shouldScheduleCleanup = true
+		// 从最后一个连接断开时开始计时
+		s.LastReceiveTime = time.Now()
 		sessionId = s.Id
 	}
 	s.mu.Unlock()
 
-	// 如果没有活跃通道，触发清理
-	if shouldTriggerCleanup && cleanupCallback != nil {
+	if shouldScheduleCleanup {
 		xl := xlog.NewLogger("session-" + sessionId)
-		xl.Infof("No active event channels remaining, triggering session cleanup for %s", sessionId)
-		cleanupCallback(sessionId)
+		xl.Infof("No active event channels remaining, session %s will be cleaned after %s", sessionId, s.cleanupConfig.noConnectionTTL)
 	}
 }
 
