@@ -180,3 +180,39 @@ func TestSessionAggregatedToolsList(t *testing.T) {
 
 	xl.Infof("Test completed successfully with %d aggregated tools", len(allTools))
 }
+
+func TestSessionInitializedNotificationNoResponse(t *testing.T) {
+	xl := xlog.NewLogger("test-initialized-notification")
+	session := NewSession("initialized-notification-test-id")
+	t.Cleanup(func() {
+		session.mu.Lock()
+		delete(session.mcpClients, "test-mcp")
+		session.mu.Unlock()
+		session.Close()
+	})
+
+	session.mu.Lock()
+	session.mcpClients["test-mcp"] = nil
+	session.mu.Unlock()
+
+	eventChan := session.GetEventChan()
+
+	err := session.sendToMcp(
+		xl,
+		"test-mcp",
+		mcp.JSONRPCRequest{
+			JSONRPC: "2.0",
+			Request: mcp.Request{Method: "notifications/initialized"},
+		},
+		[]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`),
+	)
+	if err != nil {
+		t.Fatalf("failed to send initialized notification: %v", err)
+	}
+
+	select {
+	case result := <-eventChan:
+		t.Fatalf("expected no response event for initialized notification, got: %s", result.Data)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
