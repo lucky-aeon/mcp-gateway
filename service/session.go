@@ -189,6 +189,7 @@ func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err erro
 
 func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPCRequest, reqRaw json.RawMessage) error {
 	xl = xlog.WithChildName(mcpName, xl)
+	isNotification := baseReq.ID.IsNil() || strings.HasPrefix(baseReq.Method, "notifications/")
 
 	s.mu.RLock()
 	mCli, ok := s.mcpClients[mcpName]
@@ -204,12 +205,16 @@ func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPC
 
 	result, err := s.handleMCPMethod(ctx, xl, mCli, mcpName, baseReq.Method, reqRaw)
 	if err != nil {
+		if isNotification {
+			xl.Warnf("Ignore notification %s error: %v", baseReq.Method, err)
+			return nil
+		}
 		xl.Errorf("failed to call MCP method %s: %v", baseReq.Method, err)
 		s.sendErrorResponse(baseReq.ID, err)
 		return err
 	}
 
-	if result != nil {
+	if result != nil && !isNotification {
 		s.sendSuccessResponse(baseReq.ID, result)
 	}
 
@@ -658,6 +663,9 @@ func (s *Session) IsToolsListReady() bool {
 
 func (s *Session) handleMCPMethod(ctx context.Context, xl xlog.Logger, mCli client.MCPClient, mcpName McpName, method string, reqRaw json.RawMessage) (interface{}, error) {
 	switch mcp.MCPMethod(method) {
+	case "notifications/initialized":
+		return nil, nil
+
 	case mcp.MethodInitialize:
 		return s.mcpinitializeResults[mcpName], nil
 
