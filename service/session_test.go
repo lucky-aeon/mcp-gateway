@@ -216,3 +216,106 @@ func TestSessionInitializedNotificationNoResponse(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func TestSessionNoImmediateCleanupAfterLastChannelClosed(t *testing.T) {
+	session := NewSession("no-immediate-cleanup")
+	defer session.Close()
+
+	cleanupCalled := make(chan string, 1)
+	session.SetCleanupCallback(func(sessionId string) {
+		cleanupCalled <- sessionId
+	})
+
+	_, closeChan := session.GetEventChanWithCloser()
+	closeChan()
+
+	select {
+	case <-cleanupCalled:
+		t.Fatalf("expected cleanup not to run immediately after last channel closed")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestSessionCleanupAfterNoConnectionTTL(t *testing.T) {
+	session := NewSession("cleanup-after-ttl")
+	defer session.Close()
+
+	cleanupCalled := make(chan string, 1)
+	session.SetCleanupCallback(func(sessionId string) {
+		cleanupCalled <- sessionId
+	})
+
+	session.mu.Lock()
+	session.LastReceiveTime = time.Now().Add(-sessionNoConnectionTTL - time.Second)
+	session.mu.Unlock()
+
+	session.checkInactivity()
+
+	select {
+	case got := <-cleanupCalled:
+		if got != session.Id {
+			t.Fatalf("expected session id %s, got %s", session.Id, got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected cleanup callback to be triggered")
+	}
+}
+
+func TestSessionNotCleanupBeforeNoConnectionTTL(t *testing.T) {
+	session := NewSession("not-cleanup-before-ttl")
+	defer session.Close()
+
+	cleanupCalled := make(chan string, 1)
+	session.SetCleanupCallback(func(sessionId string) {
+		cleanupCalled <- sessionId
+	})
+
+	session.mu.Lock()
+	session.LastReceiveTime = time.Now().Add(-sessionNoConnectionTTL + 10*time.Second)
+	session.mu.Unlock()
+
+	session.checkInactivity()
+
+	select {
+	case <-cleanupCalled:
+		t.Fatalf("expected cleanup callback not to be triggered before TTL")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestSessionCustomCleanupConfig(t *testing.T) {
+	session := newSession("custom-cleanup-config", sessionCleanupConfig{
+		noConnectionTTL:         3 * time.Second,
+		inactivityCheckInterval: time.Hour,
+	})
+	defer session.Close()
+
+	cleanupCalled := make(chan string, 1)
+	session.SetCleanupCallback(func(sessionId string) {
+		cleanupCalled <- sessionId
+	})
+
+	session.mu.Lock()
+	session.LastReceiveTime = time.Now().Add(-2 * time.Second)
+	session.mu.Unlock()
+
+	session.checkInactivity()
+
+	select {
+	case <-cleanupCalled:
+		t.Fatalf("expected cleanup callback not to be triggered before custom TTL")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	session.mu.Lock()
+	session.LastReceiveTime = time.Now().Add(-4 * time.Second)
+	session.mu.Unlock()
+
+	session.checkInactivity()
+
+	select {
+	case <-cleanupCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected cleanup callback to be triggered after custom TTL")
+	}
+}

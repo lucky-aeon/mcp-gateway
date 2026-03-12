@@ -51,10 +51,10 @@ func (c *Config) Default() {
 		}
 	}
 	if c.SessionGCInterval == 0 {
-		c.SessionGCInterval = 5 * time.Minute
+		c.SessionGCInterval = 10 * time.Second
 	}
 	if c.ProxySessionTimeout == 0 {
-		c.ProxySessionTimeout = 5 * c.SessionGCInterval // 默认为5倍GC间隔
+		c.ProxySessionTimeout = 1 * time.Minute
 	}
 	if c.McpServiceMgrConfig.McpServiceRetryCount == 0 {
 		c.McpServiceMgrConfig.McpServiceRetryCount = 3

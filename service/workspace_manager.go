@@ -51,7 +51,10 @@ func (m *WorkspaceManager) createWorkspace(xl xlog.Logger, workId string) *WorkS
 		},
 		McpServiceMgrConfig: m.cfg.McpServiceMgrConfig,
 		Servers:             make(map[string]config.MCPServerConfig),
-	}, m.portManager)
+	}, m.portManager, sessionCleanupConfig{
+		inactivityCheckInterval: m.cfg.SessionGCInterval,
+		noConnectionTTL:         m.cfg.ProxySessionTimeout,
+	})
 	m.workspacesLock.Lock()
 	m.workspaces[workspace.Id] = workspace
 	m.workspacesLock.Unlock()
