@@ -1,28 +1,31 @@
 package service
 
+import (
+	"net"
+)
+
 type PortManagerI interface {
 	GetNextAvailablePort() int
 	ReleasePort(port int)
 }
 
-type portManager struct {
-	nextPort int
-}
+type portManager struct{}
 
 func NewPortManager() PortManagerI {
-	return &portManager{
-		nextPort: 10000,
-	}
+	return &portManager{}
 }
 
 func (pm *portManager) GetNextAvailablePort() int {
-	port := pm.nextPort
-	pm.nextPort++
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		// 如果系统分配失败，回退到从 10000 开始递增
+		return 10000
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
 	return port
 }
 
 func (pm *portManager) ReleasePort(port int) {
-	if port < pm.nextPort {
-		pm.nextPort = port
-	}
+	// 系统自动分配的端口无需手动释放
 }
