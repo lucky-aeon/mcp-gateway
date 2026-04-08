@@ -321,13 +321,16 @@ func (s *McpService) GetUrl() string {
 	return ""
 }
 
-// SSE
+// GetSSEUrl get sse url
 func (s *McpService) GetSSEUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
-	sseUrl, _ := s.bridge.CompleteSseEndpoint()
-	return s.GetUrl() + sseUrl
+	if s.bridge != nil {
+		sseUrl, _ := s.bridge.CompleteSseEndpoint()
+		return s.GetUrl() + sseUrl
+	}
+	return s.GetUrl()
 }
 
 // Message
