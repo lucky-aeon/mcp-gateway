@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -20,11 +21,18 @@ import (
 )
 
 func main() {
+	var protocolFlag string
+	flag.StringVar(&protocolFlag, "protocol", "", "Gateway protocol: sse or streamhttp")
+
 	cfgDir := "./vm"
 	if _, err := os.Stat(cfgDir); os.IsNotExist(err) {
 		cfgDir = "."
 	}
+	flag.Parse()
 	cfg, err := config.InitConfig(cfgDir)
+	if protocolFlag != "" {
+		cfg.GatewayProtocol = protocolFlag
+	}
 	if err != nil {
 		panic(fmt.Errorf("failed to init config: %w", err))
 	}
