@@ -55,8 +55,9 @@ type McpService struct {
 	RetryCount int
 	RetryMax   int
 
-	// stdio-sse bridge
-	bridge *bridge.StdioToSSEBridge
+	// bridge
+	bridge bridge.Bridge
+	isSSE  bool
 
 	// 状态详情
 	LastError      string    // 最后一次错误信息
@@ -178,13 +179,24 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
-	bridgeInstance, err := bridge.NewStdioToSSEBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
+	var bridgeInstance bridge.Bridge
+	if s.Config.GatewayProtocol == "streamhttp" {
+		bridgeInstance, err = bridge.NewStdioToHTTPStreamBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
+		if err == nil {
+			s.isSSE = false
+		}
+	} else {
+		bridgeInstance, err = bridge.NewStdioToSSEBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
+		if err == nil {
+			s.isSSE = true
+		}
+	}
 	if err != nil {
 		logger.Warnf("close logfile: %v", logFile.Close())
-		s.LastError = fmt.Sprintf("failed to create stdio-sse bridge: %v", err)
+		s.LastError = fmt.Sprintf("failed to create bridge: %v", err)
 		s.FailureReason = "Bridge creation failed"
 		s.Status = Failed
-		return fmt.Errorf("failed to create stdio-sse bridge: %w", err)
+		return fmt.Errorf("failed to create bridge: %w", err)
 	}
 
 	s.bridge = bridgeInstance
@@ -321,22 +333,27 @@ func (s *McpService) GetUrl() string {
 	return ""
 }
 
-// SSE
 func (s *McpService) GetSSEUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
-	sseUrl, _ := s.bridge.CompleteSseEndpoint()
-	return s.GetUrl() + sseUrl
+	if s.isSSE {
+		sseUrl, _ := s.bridge.(bridge.SSEBridge).CompleteSseEndpoint()
+		return s.GetUrl() + sseUrl
+	}
+	return ""
 }
 
-// Message
 func (s *McpService) GetMessageUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
-	mesUrl, _ := s.bridge.CompleteMessageEndpoint()
-	return s.GetUrl() + mesUrl
+	if s.isSSE {
+		mesUrl, _ := s.bridge.(bridge.SSEBridge).CompleteMessageEndpoint()
+		return s.GetUrl() + mesUrl
+	}
+	httpUrl, _ := s.bridge.(bridge.HTTPStreamBridge).CompleteHTTPStreamEndpoint()
+	return s.GetUrl() + httpUrl
 }
 
 func (s *McpService) GetPort() int {
