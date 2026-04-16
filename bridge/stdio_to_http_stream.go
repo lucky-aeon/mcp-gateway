@@ -238,3 +238,7 @@ func (b *StdioToHTTPStreamBridge) Ping(ctx context.Context) error {
 	}
 	return b.stdioClient.Ping(ctx)
 }
+
+func (b *StdioToHTTPStreamBridge) CompleteHTTPStreamEndpoint() (string, error) {
+	return fmt.Sprintf("/%s", b.mcpName), nil
+}
