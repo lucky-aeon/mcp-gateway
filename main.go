@@ -30,11 +30,11 @@ func main() {
 	}
 	flag.Parse()
 	cfg, err := config.InitConfig(cfgDir)
-	if protocolFlag != "" {
-		cfg.GatewayProtocol = protocolFlag
-	}
 	if err != nil {
 		panic(fmt.Errorf("failed to init config: %w", err))
+	}
+	if protocolFlag != "" {
+		cfg.GatewayProtocol = protocolFlag
 	}
 	defer func() {
 		cfg.SaveConfig()
