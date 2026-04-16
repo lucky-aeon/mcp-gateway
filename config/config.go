@@ -16,6 +16,7 @@ type Config struct {
 	SessionGCInterval   time.Duration // Session GC间隔
 	ProxySessionTimeout time.Duration // Proxy Session 超时时间
 	McpServiceMgrConfig McpServiceMgrConfig
+	GatewayProtocol     string // 新增: "sse" | "streamhttp"
 }
 
 func InitConfig(cfgDir string) (cfg *Config, err error) {
@@ -59,7 +60,14 @@ func (c *Config) Default() {
 	if c.McpServiceMgrConfig.McpServiceRetryCount == 0 {
 		c.McpServiceMgrConfig.McpServiceRetryCount = 3
 	}
+	if c.GatewayProtocol == "" {
+		c.GatewayProtocol = "sse" // 默认 SSE
+	}
 
+}
+
+func (c *Config) IsStreamHTTP() bool {
+	return c.GatewayProtocol == "streamhttp"
 }
 
 func (c *Config) GetAuthConfig() *AuthConfig {
