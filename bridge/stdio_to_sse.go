@@ -239,3 +239,11 @@ func (b *StdioToSSEBridge) Ping(ctx context.Context) error {
 	}
 	return b.stdioClient.Ping(ctx)
 }
+
+func (b *StdioToSSEBridge) CompleteSseEndpoint() (string, error) {
+	return fmt.Sprintf("/%s/sse", b.mcpName), nil
+}
+
+func (b *StdioToSSEBridge) CompleteMessageEndpoint() (string, error) {
+	return fmt.Sprintf("/%s/message", b.mcpName), nil
+}
