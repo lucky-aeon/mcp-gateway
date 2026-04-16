@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 
@@ -49,4 +50,38 @@ func (m *ServerManager) handleStreamHTTP(c echo.Context) error {
 	c.Response().WriteHeader(resp.StatusCode)
 	_, err = io.Copy(c.Response().Writer, resp.Body)
 	return err
+}
+
+func (m *ServerManager) handleGlobalStreamHTTP(c echo.Context) error {
+	xl := xlog.NewLogger("GLOBAL-STREAMHTTP")
+	workspace := utils.GetWorkspace(c, service.DefaultWorkspace)
+	querySessionId, err := utils.GetSession(c)
+	if err != nil {
+		querySessionId = ""
+	}
+
+	var session *service.Session
+	var exists bool
+	if querySessionId != "" {
+		session, exists = m.mcpServiceMgr.GetProxySession(xl, service.NameArg{
+			Workspace: workspace,
+			Session:   querySessionId,
+		})
+		if !exists {
+			return c.String(http.StatusNotFound, "session not found")
+		}
+	} else {
+		session, err = m.mcpServiceMgr.CreateProxySession(xl, service.NameArg{
+			Workspace: workspace,
+			Session:   querySessionId,
+		})
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+	}
+
+	c.Response().Header().Set("Content-Type", "application/json")
+	c.Response().WriteHeader(http.StatusOK)
+	c.Response().Write([]byte(fmt.Sprintf(`{"sessionId":"%s","endpoint":"/stream"}`, session.Id)))
+	return nil
 }

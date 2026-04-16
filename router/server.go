@@ -34,6 +34,7 @@ func NewServerManager(cfg config.Config, e *echo.Echo) *ServerManager {
 	if m.cfg.IsStreamHTTP() {
 		e.GET("/:service", m.handleStreamHTTP)
 		e.POST("/:service", m.handleStreamHTTP)
+		e.POST("/stream", m.handleGlobalStreamHTTP)
 	} else {
 		e.GET("/sse", m.handleGlobalSSE)          // 全局SSE WIP
 		e.POST("/message", m.handleGlobalMessage) // 全局消息 WIP
