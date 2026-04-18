@@ -34,7 +34,10 @@ func NewServerManager(cfg config.Config, e *echo.Echo) *ServerManager {
 	if m.cfg.IsStreamHTTP() {
 		e.GET("/:service", m.handleStreamHTTP)
 		e.POST("/:service", m.handleStreamHTTP)
+		// 全局 Streamable HTTP 聚合入口，按 MCP 2025-03-26 规范实现
 		e.POST("/stream", m.handleGlobalStreamHTTP)
+		e.GET("/stream", m.handleGlobalStreamHTTP)
+		e.DELETE("/stream", m.handleGlobalStreamHTTP)
 	} else {
 		e.GET("/sse", m.handleGlobalSSE)          // 全局SSE WIP
 		e.POST("/message", m.handleGlobalMessage) // 全局消息 WIP
