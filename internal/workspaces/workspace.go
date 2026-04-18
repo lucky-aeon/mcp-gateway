@@ -86,7 +86,19 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 	}
 
 	// add to workspace config
+	// 注意：存入的是用户提交的原始配置，不含下面回填的运行时默认值，
+	// 避免把 workspace 名 / 日志路径等"上下文相关"的字段固化到 mcp_servers.json。
 	w.cfg.AddMcpServerCfg(serviceName, mcpConfig)
+
+	// 回填 workspace 级默认值到本地副本：
+	//   - Workspace: 用于日志文件名拼接 "{workspace}.{mcpname}.log"
+	//   - LogConfig.Path: 落地到 WorkSpace 自己的目录（通常 = cfg.WorkspacePath）
+	if mcpConfig.Workspace == "" {
+		mcpConfig.Workspace = w.Id
+	}
+	if mcpConfig.LogConfig.Path == "" {
+		mcpConfig.LogConfig.Path = w.cfg.LogConfig.Path
+	}
 
 	// create service instance
 	instance := runtime.NewMcpService(serviceName, mcpConfig, w.portManager)

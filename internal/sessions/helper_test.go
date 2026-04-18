@@ -28,5 +28,7 @@ func mockMcpServiceFileSystem(t *testing.T) *runtime.McpService {
 			"@modelcontextprotocol/server-filesystem",
 			pwd,
 		},
+		// 测试环境下把日志落到 testdata 下，避免污染仓库根目录
+		LogConfig: config.LogConfig{Path: pwd},
 	}, runtime.NewPortManager())
 }

@@ -20,6 +20,11 @@ func CreateLogDir(baseDir string) error {
 }
 
 func CreateLogFile(baseDir, fileName string) (*os.File, error) {
+	// fail-fast：避免 baseDir 为空时 filepath.Join 退化成 "./logs/..."，导致日志文件跑到 CWD。
+	// 调用方（例如 runtime.McpService.Start）必须保证已从 workspace 继承了正确的日志根目录。
+	if baseDir == "" {
+		return nil, fmt.Errorf("xlog.CreateLogFile: empty baseDir for file %q", fileName)
+	}
 	err := CreateLogDir(baseDir)
 	if err != nil {
 		return nil, err
