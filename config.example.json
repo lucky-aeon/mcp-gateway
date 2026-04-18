@@ -1,0 +1,15 @@
+{
+    "LogLevel": 0,
+    "WorkspacePath": "./vm",
+    "Bind": "[::]:8080",
+    "Auth": {
+        "Enabled": true,
+        "ApiKey": "123456"
+    },
+    "SessionGCInterval": 300000000000,
+    "ProxySessionTimeout": 1500000000000,
+    "McpServiceMgrConfig": {
+        "McpServiceRetryCount": 3
+    },
+    "GatewayProtocol": "streamhttp"
+}

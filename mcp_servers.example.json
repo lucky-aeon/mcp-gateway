@@ -1,0 +1,10 @@
+{
+  "file-system": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "/Users/liushunshun/workspace/coding/ai/mcp-gateway/vm"
+    ]
+  }
+}

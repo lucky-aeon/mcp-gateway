@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,28 +23,33 @@ import (
 )
 
 func main() {
-	var protocolFlag string
+	var protocolFlag, cfgPath string
+	var assumeYes bool
 	flag.StringVar(&protocolFlag, "protocol", "", "Gateway protocol: sse or streamhttp")
-
-	cfgDir := "./vm"
-	if _, err := os.Stat(cfgDir); os.IsNotExist(err) {
-		cfgDir = "."
-	}
+	flag.StringVar(&cfgPath, "cfg", "./config.json", "Path to the configuration file")
+	flag.BoolVar(&assumeYes, "yes", false, "Assume yes to all prompts (e.g. auto-create missing workspace directory)")
 	flag.Parse()
-	cfg, err := config.InitConfig(cfgDir)
+
+	cfg, err := config.InitConfig(cfgPath)
 	if err != nil {
 		panic(fmt.Errorf("failed to init config: %w", err))
 	}
 	if protocolFlag != "" {
 		cfg.GatewayProtocol = protocolFlag
 	}
+
+	// 确保 WorkspacePath 存在；不存在则询问用户是否创建
+	if err := ensureWorkspacePath(cfg.WorkspacePath, assumeYes); err != nil {
+		panic(fmt.Errorf("failed to prepare workspace path %q: %w", cfg.WorkspacePath, err))
+	}
+
 	defer func() {
 		cfg.SaveConfig()
 	}()
 
 	// Setup logging with zap
 	xlog.SetHeader(xlog.DefaultHeader)
-	err = xlog.SetupFileLogging(cfg.ConfigDirPath, "plugin-proxy.log")
+	err = xlog.SetupFileLogging(cfg.WorkspacePath, "plugin-proxy.log")
 	if err != nil {
 		panic(fmt.Errorf("failed to setup file logging: %w", err))
 	}
@@ -111,4 +118,55 @@ func main() {
 		mainLogger.Fatalf("Error during server shutdown: %v", err)
 	}
 	mainLogger.Info("Server shutdown completed")
+}
+
+// ensureWorkspacePath 确保 workspace 目录存在。
+// 目录不存在时：若 assumeYes 为 true 或 stdin 为交互式终端且用户确认，则创建；否则返回错误。
+func ensureWorkspacePath(path string, assumeYes bool) error {
+	if path == "" {
+		return fmt.Errorf("workspace path is empty")
+	}
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("workspace path %q exists but is not a directory", path)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+
+	create := assumeYes
+	if !create {
+		if !isStdinTerminal() {
+			return fmt.Errorf("workspace path %q does not exist; re-run with -yes to auto-create, or create it manually", path)
+		}
+		fmt.Printf("Workspace directory %q does not exist. Create it? [y/N]: ", path)
+		reader := bufio.NewReader(os.Stdin)
+		answer, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return fmt.Errorf("read user input: %w", readErr)
+		}
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		create = answer == "y" || answer == "yes"
+		if !create {
+			return fmt.Errorf("workspace path creation declined by user")
+		}
+	}
+
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return fmt.Errorf("mkdir workspace path: %w", err)
+	}
+	fmt.Printf("Created workspace directory: %s\n", path)
+	return nil
+}
+
+// isStdinTerminal 判断 stdin 是否连接到交互式终端。
+func isStdinTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
