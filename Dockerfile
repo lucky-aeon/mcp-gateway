@@ -7,7 +7,7 @@ RUN go env -w GO111MODULE=on && \
     go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server
+RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server ./cmd/mcp-gateway
 
 FROM node:20-alpine
 
