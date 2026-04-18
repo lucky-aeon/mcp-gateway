@@ -22,7 +22,9 @@ func NewAuthMiddleware(cfg *config.Config) *AuthMiddleware {
 
 func (m *AuthMiddleware) GetKeyAuthConfig() middleware.KeyAuthConfig {
 	return middleware.KeyAuthConfig{
-		KeyLookup: "header:Authorization:Bearer ,query:api_key,query:sessionId", // 从Header或Query获取
+		// 从 Header 或 Query 获取。新增 Mcp-Session-Id / X-Session-Id 以兼容
+		// Streamable HTTP 客户端（session 走 header）。
+		KeyLookup: "header:Authorization:Bearer ,query:api_key,query:sessionId,header:Mcp-Session-Id,header:X-Session-Id",
 		Validator: m.KeyAuthValidator,
 		ErrorHandler: func(err error, c echo.Context) error {
 			return c.JSON(http.StatusUnauthorized, map[string]any{"code": 401, "msg": errs.ErrAuthFailed.Error()})
@@ -46,7 +48,7 @@ func (m *AuthMiddleware) KeyAuthValidator(key string, c echo.Context) (bool, err
 
 	checkSession := false
 	switch realPath {
-	case "/sse", "/message":
+	case "/sse", "/message", "/stream":
 		checkSession = true
 	default:
 		if strings.Contains(realPath, "/message") {
@@ -55,8 +57,14 @@ func (m *AuthMiddleware) KeyAuthValidator(key string, c echo.Context) (bool, err
 	}
 
 	if checkSession {
-		// 检查session
-		if c.QueryParam("sessionId") != "" { // 如果是session，直接放行
+		// 检查session：query 和 header 均可放行，兼容 SSE 与 Streamable HTTP 两种协议
+		if c.QueryParam("sessionId") != "" {
+			return true, nil
+		}
+		if c.Request().Header.Get("Mcp-Session-Id") != "" {
+			return true, nil
+		}
+		if c.Request().Header.Get("X-Session-Id") != "" {
 			return true, nil
 		}
 		return false, nil

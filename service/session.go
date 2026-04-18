@@ -797,3 +797,71 @@ func (s *Session) IsReady() bool {
 	}
 	return true
 }
+
+// AggregateCapabilities OR-合并所有已订阅下游 MCP 在 initialize 时声明的
+// capabilities，用于网关自身对 client 的 capability 声明。只会声明至少有一个
+// 下游真的支持的能力，避免 client 依据网关声明发出下游全都不支持的请求。
+func (s *Session) AggregateCapabilities() mcp.ServerCapabilities {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var caps mcp.ServerCapabilities
+	for _, r := range s.mcpinitializeResults {
+		if r == nil {
+			continue
+		}
+		mergeCapabilities(&caps, r.Capabilities)
+	}
+	return caps
+}
+
+// mergeCapabilities 把 src 中声明的能力 OR 合并到 dst 中。
+func mergeCapabilities(dst *mcp.ServerCapabilities, src mcp.ServerCapabilities) {
+	if src.Tools != nil {
+		if dst.Tools == nil {
+			dst.Tools = &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{}
+		}
+		if src.Tools.ListChanged {
+			dst.Tools.ListChanged = true
+		}
+	}
+	if src.Prompts != nil {
+		if dst.Prompts == nil {
+			dst.Prompts = &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{}
+		}
+		if src.Prompts.ListChanged {
+			dst.Prompts.ListChanged = true
+		}
+	}
+	if src.Resources != nil {
+		if dst.Resources == nil {
+			dst.Resources = &struct {
+				Subscribe   bool `json:"subscribe,omitempty"`
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{}
+		}
+		if src.Resources.Subscribe {
+			dst.Resources.Subscribe = true
+		}
+		if src.Resources.ListChanged {
+			dst.Resources.ListChanged = true
+		}
+	}
+	if src.Logging != nil && dst.Logging == nil {
+		dst.Logging = &struct{}{}
+	}
+	if len(src.Experimental) > 0 {
+		if dst.Experimental == nil {
+			dst.Experimental = map[string]any{}
+		}
+		for k, v := range src.Experimental {
+			if _, exists := dst.Experimental[k]; !exists {
+				dst.Experimental[k] = v
+			}
+		}
+	}
+}

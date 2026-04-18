@@ -319,3 +319,117 @@ func TestSessionCustomCleanupConfig(t *testing.T) {
 		t.Fatalf("expected cleanup callback to be triggered after custom TTL")
 	}
 }
+
+// mergeInitializeResult 写入 session 的 mcpinitializeResults，供 AggregateCapabilities 测试使用。
+func (s *Session) setInitializeResultForTest(name string, r *mcp.InitializeResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mcpinitializeResults[name] = r
+}
+
+func TestSession_AggregateCapabilities_Empty(t *testing.T) {
+	s := NewSession("aggr-empty")
+	defer s.Close()
+
+	caps := s.AggregateCapabilities()
+	if caps.Tools != nil || caps.Prompts != nil || caps.Resources != nil || caps.Logging != nil || caps.Experimental != nil {
+		t.Errorf("expected empty capabilities, got %+v", caps)
+	}
+}
+
+func TestSession_AggregateCapabilities_OnlyDeclaresWhenAtLeastOneDownstreamHasIt(t *testing.T) {
+	s := NewSession("aggr-some")
+	defer s.Close()
+
+	s.setInitializeResultForTest("m1", &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{
+			Tools: &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{ListChanged: false},
+		},
+	})
+	s.setInitializeResultForTest("m2", &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{}, // 无能力声明
+	})
+
+	caps := s.AggregateCapabilities()
+	if caps.Tools == nil {
+		t.Errorf("expected Tools declared because m1 has it")
+	}
+	if caps.Logging != nil {
+		t.Errorf("expected Logging nil because no downstream declared it, got %+v", caps.Logging)
+	}
+	if caps.Prompts != nil {
+		t.Errorf("expected Prompts nil, got %+v", caps.Prompts)
+	}
+	if caps.Resources != nil {
+		t.Errorf("expected Resources nil, got %+v", caps.Resources)
+	}
+}
+
+func TestSession_AggregateCapabilities_ORsAcrossDownstreams(t *testing.T) {
+	s := NewSession("aggr-or")
+	defer s.Close()
+
+	s.setInitializeResultForTest("m1", &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{
+			Tools: &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{ListChanged: false},
+			Resources: &struct {
+				Subscribe   bool `json:"subscribe,omitempty"`
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{Subscribe: true, ListChanged: false},
+		},
+	})
+	s.setInitializeResultForTest("m2", &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{
+			Tools: &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{ListChanged: true},
+			Prompts: &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{ListChanged: true},
+			Logging: &struct{}{},
+			Experimental: map[string]any{
+				"foo": "bar",
+			},
+		},
+	})
+
+	caps := s.AggregateCapabilities()
+	if caps.Tools == nil || !caps.Tools.ListChanged {
+		t.Errorf("expected Tools.ListChanged=true after OR, got %+v", caps.Tools)
+	}
+	if caps.Prompts == nil || !caps.Prompts.ListChanged {
+		t.Errorf("expected Prompts.ListChanged=true, got %+v", caps.Prompts)
+	}
+	if caps.Resources == nil || !caps.Resources.Subscribe {
+		t.Errorf("expected Resources.Subscribe=true, got %+v", caps.Resources)
+	}
+	if caps.Logging == nil {
+		t.Errorf("expected Logging declared")
+	}
+	if caps.Experimental["foo"] != "bar" {
+		t.Errorf("expected Experimental[foo]=bar, got %+v", caps.Experimental)
+	}
+}
+
+func TestSession_AggregateCapabilities_IgnoresNilResults(t *testing.T) {
+	s := NewSession("aggr-nil")
+	defer s.Close()
+
+	s.setInitializeResultForTest("m-nil", nil)
+	s.setInitializeResultForTest("m1", &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{
+			Tools: &struct {
+				ListChanged bool `json:"listChanged,omitempty"`
+			}{ListChanged: true},
+		},
+	})
+
+	caps := s.AggregateCapabilities()
+	if caps.Tools == nil || !caps.Tools.ListChanged {
+		t.Errorf("expected Tools.ListChanged=true, nil result should be skipped; got %+v", caps.Tools)
+	}
+}
