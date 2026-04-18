@@ -161,8 +161,13 @@ func (s *McpService) Start(logger xlog.Logger) error {
 		logger.Infof("Assigned port: %d", s.Port)
 	}
 
-	// 创建日志文件
-	logFile, err := xlog.CreateLogFile(s.Config.LogConfig.Path, s.Name+".log")
+	// 创建日志文件。命名规则：{workspace}.{mcpname}.log，便于同一 logs/ 下区分不同 workspace。
+	// Workspace 缺省时只用 mcpname，保持向后兼容。
+	logName := s.Name + ".log"
+	if s.Config.Workspace != "" {
+		logName = s.Config.Workspace + "." + logName
+	}
+	logFile, err := xlog.CreateLogFile(s.Config.LogConfig.Path, logName)
 	if err != nil {
 		s.LastError = fmt.Sprintf("failed to create log file: %v", err)
 		s.FailureReason = "Log file creation failed"
