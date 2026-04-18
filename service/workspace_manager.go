@@ -47,7 +47,7 @@ func (m *WorkspaceManager) createWorkspace(xl xlog.Logger, workId string) *WorkS
 	workspace := NewWorkSpace(workId, config.WorkspaceConfig{
 		LogConfig: config.LogConfig{
 			Level: m.cfg.LogLevel,
-			Path:  m.cfg.ConfigDirPath,
+			Path:  m.cfg.WorkspacePath,
 		},
 		McpServiceMgrConfig: m.cfg.McpServiceMgrConfig,
 		Servers:             make(map[string]config.MCPServerConfig),

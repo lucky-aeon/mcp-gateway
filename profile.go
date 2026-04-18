@@ -105,13 +105,10 @@ func StartPeriodicProfiling(interval time.Duration) {
 
 	ticker := time.NewTicker(interval)
 	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				timestamp := time.Now().Format("20060102_150405")
-				WriteMemProfile("mem_profile_" + timestamp + ".prof")
-				WriteGoroutineProfile("goroutine_profile_" + timestamp + ".prof")
-			}
+		for range ticker.C {
+			timestamp := time.Now().Format("20060102_150405")
+			WriteMemProfile("mem_profile_" + timestamp + ".prof")
+			WriteGoroutineProfile("goroutine_profile_" + timestamp + ".prof")
 		}
 	}()
 }
