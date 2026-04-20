@@ -12,5 +12,21 @@ services:
       - mongodb_data:/data/db
     restart: unless-stopped
 
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/mcp_gateway
+    volumes:
+      - ./vm:/etc/proxy/vm
+      - ./mcp_servers.json:/etc/proxy/mcp_servers.json
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
 volumes:
   mongodb_data:
