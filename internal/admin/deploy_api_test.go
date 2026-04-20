@@ -104,9 +104,13 @@ func (m *MockPortManager) IsPortAvailable(port int) bool {
 // 创建测试用的 Handler
 func createTestServerManager() (*Handler, *MockServiceManager) {
 	mockServiceMgr := &MockServiceManager{}
+	cfg := &config.Config{}
+	cfg.Default()
 
 	serverMgr := &Handler{
 		services: mockServiceMgr,
+		cfg:      cfg,
+		state:    newControlPlaneState(),
 	}
 
 	return serverMgr, mockServiceMgr

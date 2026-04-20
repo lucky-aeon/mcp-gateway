@@ -9,3 +9,5 @@ yarn.lock
 .DS_Store
 CLAUDE.md
 web/dist
+.gocache
+frontend/tsconfig.tsbuildinfo

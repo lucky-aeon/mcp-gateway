@@ -4,11 +4,14 @@
 package server
 
 import (
+	"context"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/admin"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/gateway"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/persistence"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/runtime"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
@@ -18,6 +21,7 @@ import (
 // 目前只持有 workspaces.ServiceManager 以便在关闭时统一终止所有 MCP 服务。
 type Server struct {
 	services workspaces.ServiceManagerI
+	auth     *identity.Service
 }
 
 // New 构造并返回一个 Server 实例，同时在给定的 Echo 上注册：
@@ -30,9 +34,24 @@ type Server struct {
 func New(cfg config.Config, e *echo.Echo) *Server {
 	portMgr := runtime.NewPortManager()
 	services := workspaces.NewServiceMgr(cfg, portMgr)
+	var store identity.Store
+	if cfg.GetAuthConfig().GetMode() == "saas" {
+		if err := identity.ValidateSaaSConfig(&cfg); err != nil {
+			panic(err)
+		}
+		mongoStore, err := identity.OpenMongoStore(context.Background(), cfg.Auth.MongoURI, cfg.Auth.MongoDatabase)
+		if err != nil {
+			panic(err)
+		}
+		store = mongoStore
+	}
+	authSvc := identity.NewService(&cfg, store)
+	if err := authSvc.Bootstrap(context.Background()); err != nil {
+		panic(err)
+	}
 
-	adminH := admin.NewHandler(services)
-	gatewayH := gateway.NewHandler(services, cfg)
+	adminH := admin.NewHandler(services, &cfg, authSvc)
+	gatewayH := gateway.NewHandler(services, cfg, authSvc)
 
 	// 先注册精确匹配的路由
 	adminH.Register(e)
@@ -50,10 +69,13 @@ func New(cfg config.Config, e *echo.Echo) *Server {
 		return err
 	})
 
-	return &Server{services: services}
+	return &Server{services: services, auth: authSvc}
 }
 
 // Close 优雅关闭底层 service manager（会关闭所有 workspaces 及其 MCP 服务）。
 func (s *Server) Close() {
 	s.services.Close()
+	if s.auth != nil {
+		_ = s.auth.Close(context.Background())
+	}
 }

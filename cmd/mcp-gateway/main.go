@@ -17,7 +17,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
-	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/profiling"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/server"
@@ -77,7 +76,6 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
-	e.Use(middleware.KeyAuthWithConfig(identity.NewAuthMiddleware(cfg).GetKeyAuthConfig())) // API Key 鉴权
 
 	// 初始化服务管理器
 	srvMgr := server.New(*cfg, e)
