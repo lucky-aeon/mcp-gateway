@@ -1,12 +1,26 @@
 'use client'
 
-import { useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  CheckCircle,
+  ChevronRight,
+  Copy,
+  Database,
+  FileText,
+  Loader2,
+  Play,
+  Search,
+  Sparkles,
+  Terminal,
+  Trash2,
+  XCircle,
+} from 'lucide-react'
+
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -14,27 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { workspaces, installedMCPs } from '@/lib/mock-data'
-import { 
-  Play, 
-  Terminal, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
-  Loader2, 
-  Sparkles,
-  FileText,
-  Database,
-  Search,
-  Copy,
-  ChevronRight,
-  Trash2
-} from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { callGatewayMessage, gatewayApi, useGatewaySWR, type ListData, type MetaInfo, type Service, type Workspace } from '@/lib/gateway-api'
 
 interface ToolCall {
   id: string
+  title: string
   tool: string
   mcp: string
   params: Record<string, unknown>
@@ -48,136 +49,126 @@ interface ToolCall {
 const exampleCalls = [
   {
     id: 'ex-1',
-    title: '读取配置文件',
-    description: '使用 Filesystem MCP 读取 JSON 配置文件',
-    mcp: 'filesystem',
-    tool: 'read_file',
-    params: { path: '/data/config.json' },
+    title: '获取工具列表',
+    description: '列出当前会话下所有可用工具',
+    request: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
     icon: FileText,
   },
   {
     id: 'ex-2',
-    title: '查询用户数据',
-    description: '使用 Database MCP 执行 SQL 查询',
-    mcp: 'database',
-    tool: 'query',
-    params: { sql: 'SELECT * FROM users LIMIT 10' },
+    title: '初始化会话',
+    description: '发送 initialize 请求验证连接',
+    request: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'gateway-admin', version: '1.0.0' } } },
     icon: Database,
   },
   {
     id: 'ex-3',
-    title: '列出目录',
-    description: '列出指定目录下的所有文件',
-    mcp: 'filesystem',
-    tool: 'list_directory',
-    params: { path: '/data' },
+    title: 'Ping 网关',
+    description: '快速探测 session 通路是否正常',
+    request: { jsonrpc: '2.0', id: 1, method: 'ping' },
     icon: Search,
   },
 ]
 
 export function PlaygroundPage() {
-  const [selectedWorkspace, setSelectedWorkspace] = useState(workspaces[0]?.id || '')
-  const [selectedMCP, setSelectedMCP] = useState('')
-  const [selectedTool, setSelectedTool] = useState('')
-  const [params, setParams] = useState<Record<string, string>>({})
-  const [isExecuting, setIsExecuting] = useState(false)
+  const { data: meta } = useGatewaySWR<MetaInfo>('/api/v1/meta')
+  const { data: workspacesData } = useGatewaySWR<ListData<Workspace>>('/api/v1/workspaces')
+  const [selectedWorkspace, setSelectedWorkspace] = useState('')
+  const { data: servicesData } = useGatewaySWR<ListData<Service>>(selectedWorkspace ? `/api/v1/workspaces/${selectedWorkspace}/services` : null)
+  const { data: sessionsData } = useGatewaySWR<ListData<{ id: string }>>(selectedWorkspace ? `/api/v1/workspaces/${selectedWorkspace}/sessions` : null)
+  const [selectedSession, setSelectedSession] = useState('')
+  const [requestBody, setRequestBody] = useState(JSON.stringify(exampleCalls[0].request, null, 2))
+  const [responseText, setResponseText] = useState('')
   const [history, setHistory] = useState<ToolCall[]>([])
+  const [isExecuting, setIsExecuting] = useState(false)
   const [activeTab, setActiveTab] = useState('config')
 
-  const runningMCPs = installedMCPs.filter((m) => m.status === 'running')
-  const selectedMCPData = installedMCPs.find((m) => m.id === selectedMCP)
-  const selectedToolData = selectedMCPData?.tools.find((t) => t.name === selectedTool)
+  useEffect(() => {
+    if (!selectedWorkspace && workspacesData?.items?.[0]?.id) {
+      setSelectedWorkspace(workspacesData.items[0].id)
+    }
+  }, [selectedWorkspace, workspacesData?.items])
 
-  const handleParamChange = (name: string, value: string) => {
-    setParams((prev) => ({ ...prev, [name]: value }))
+  const sessions = sessionsData?.items || []
+  const services = servicesData?.items || []
+  const runningServices = services.filter((item) => item.status === 'running')
+  const toolsSummary = useMemo(() => services.reduce((sum, item) => sum + item.tools_count, 0), [services])
+
+  async function handleCreateSession() {
+    if (!selectedWorkspace) return
+    const session = await gatewayApi.createSession(selectedWorkspace)
+    setSelectedSession(session.id)
   }
 
-  const handleExecute = async () => {
-    if (!selectedTool || !selectedMCPData) return
-
+  async function handleExecute() {
     setIsExecuting(true)
     const callId = `call-${Date.now()}`
-    const newCall: ToolCall = {
-      id: callId,
-      tool: selectedTool,
-      mcp: selectedMCPData.name,
-      params: { ...params },
-      status: 'pending',
-      timestamp: new Date().toISOString(),
-    }
-    setHistory((prev) => [newCall, ...prev])
-    setActiveTab('history')
+    let title = '自定义请求'
+    try {
+      const body = JSON.parse(requestBody) as Record<string, unknown>
+      title = typeof body.method === 'string' ? body.method : '自定义请求'
+      const newCall: ToolCall = {
+        id: callId,
+        title,
+        tool: String(body.method || 'custom'),
+        mcp: selectedWorkspace,
+        params: body,
+        status: 'pending',
+        timestamp: new Date().toISOString(),
+      }
+      setHistory((prev) => [newCall, ...prev])
+      setActiveTab('history')
 
-    await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 800))
-
-    const success = Math.random() > 0.15
-    const mockResults: Record<string, unknown> = {
-      read_file: {
-        content: '{\n  "name": "gateway",\n  "version": "1.0.0",\n  "enabled": true\n}',
-        size: 256,
-        modified: '2024-01-20T10:30:00Z',
-      },
-      list_directory: {
-        files: [
-          { name: 'config.json', type: 'file', size: 256 },
-          { name: 'data.csv', type: 'file', size: 1024 },
-          { name: 'logs', type: 'directory' },
-        ],
-        count: 3,
-      },
-      query: {
-        rows: [
-          { id: 1, name: '张三', email: 'zhangsan@example.com' },
-          { id: 2, name: '李四', email: 'lisi@example.com' },
-        ],
-        rowCount: 2,
-        executionTime: '45ms',
-      },
-    }
-
-    setHistory((prev) =>
-      prev.map((call) =>
-        call.id === callId
-          ? {
-              ...call,
-              status: success ? 'success' : 'error',
-              result: success ? mockResults[selectedTool] || { success: true } : undefined,
-              error: success ? undefined : '执行失败：连接超时或参数无效',
-              duration: Math.floor(300 + Math.random() * 800),
-            }
-          : call
+      const started = Date.now()
+      const result = await callGatewayMessage({
+        sessionId: selectedSession || undefined,
+        body,
+        protocol: meta?.gateway_protocol || 'sse',
+      })
+      setResponseText(result.text)
+      setHistory((prev) =>
+        prev.map((item) =>
+          item.id === callId
+            ? {
+                ...item,
+                status: result.ok ? 'success' : 'error',
+                result: result.text,
+                error: result.ok ? undefined : `HTTP ${result.status}`,
+                duration: Date.now() - started,
+              }
+            : item
+        )
       )
-    )
-    setIsExecuting(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '发送失败'
+      setResponseText(message)
+      setHistory((prev) =>
+        prev.map((item) =>
+          item.id === callId
+            ? { ...item, status: 'error', error: message }
+            : item
+        )
+      )
+    } finally {
+      setIsExecuting(false)
+    }
   }
 
-  const handleExampleClick = (example: typeof exampleCalls[0]) => {
-    setSelectedMCP(example.mcp)
-    setSelectedTool(example.tool)
-    setParams(example.params as Record<string, string>)
-    setActiveTab('config')
-  }
-
-  const clearHistory = () => {
+  function clearHistory() {
     setHistory([])
-  }
-
-  const copyResult = (result: unknown) => {
-    navigator.clipboard.writeText(JSON.stringify(result, null, 2))
   }
 
   return (
     <div className="space-y-6">
-      {/* Header Stats */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+        <Card className="border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">可用 MCP</p>
-                <p className="text-2xl font-bold">{runningMCPs.length}</p>
+                <p className="text-2xl font-bold">{runningServices.length}</p>
               </div>
-              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
                 <Terminal className="h-5 w-5 text-primary" />
               </div>
             </div>
@@ -188,11 +179,9 @@ export function PlaygroundPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">可用工具</p>
-                <p className="text-2xl font-bold">
-                  {runningMCPs.reduce((sum, m) => sum + m.tools.length, 0)}
-                </p>
+                <p className="text-2xl font-bold">{toolsSummary}</p>
               </div>
-              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
                 <Sparkles className="h-5 w-5 text-muted-foreground" />
               </div>
             </div>
@@ -205,7 +194,7 @@ export function PlaygroundPage() {
                 <p className="text-sm text-muted-foreground">本次调用</p>
                 <p className="text-2xl font-bold">{history.length}</p>
               </div>
-              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
                 <Play className="h-5 w-5 text-muted-foreground" />
               </div>
             </div>
@@ -218,14 +207,12 @@ export function PlaygroundPage() {
                 <p className="text-sm text-muted-foreground">成功率</p>
                 <p className="text-2xl font-bold">
                   {history.length > 0
-                    ? Math.round(
-                        (history.filter((h) => h.status === 'success').length / 
-                         history.filter((h) => h.status !== 'pending').length) * 100
-                      ) || 0
-                    : '--'}%
+                    ? Math.round((history.filter((h) => h.status === 'success').length / Math.max(1, history.filter((h) => h.status !== 'pending').length)) * 100) || 0
+                    : '--'}
+                  %
                 </p>
               </div>
-              <div className="h-10 w-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
                 <CheckCircle className="h-5 w-5 text-green-500" />
               </div>
             </div>
@@ -234,28 +221,30 @@ export function PlaygroundPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-5">
-        {/* Left Panel - Configuration */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="space-y-6 lg:col-span-2">
           <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-lg">快速示例</CardTitle>
-              <CardDescription>点击示例快速填充参数并测试</CardDescription>
+              <CardDescription>点击示例快速填充请求并测试</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               {exampleCalls.map((example) => (
                 <button
                   key={example.id}
-                  onClick={() => handleExampleClick(example)}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg border border-border bg-card hover:bg-muted/50 hover:border-primary/30 transition-all text-left group"
+                  onClick={() => {
+                    setRequestBody(JSON.stringify(example.request, null, 2))
+                    setActiveTab('config')
+                  }}
+                  className="group flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-all hover:border-primary/30 hover:bg-muted/50"
                 >
-                  <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                     <example.icon className="h-4 w-4 text-primary" />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{example.title}</p>
-                    <p className="text-xs text-muted-foreground truncate">{example.description}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{example.title}</p>
+                    <p className="truncate text-xs text-muted-foreground">{example.description}</p>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
                 </button>
               ))}
             </CardContent>
@@ -281,17 +270,12 @@ export function PlaygroundPage() {
                   <div className="space-y-2">
                     <Label>工作空间</Label>
                     <Select value={selectedWorkspace} onValueChange={setSelectedWorkspace}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择工作空间" />
-                      </SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="选择工作空间" /></SelectTrigger>
                       <SelectContent>
-                        {workspaces.map((ws) => (
+                        {workspacesData?.items.map((ws) => (
                           <SelectItem key={ws.id} value={ws.id}>
                             <span className="flex items-center gap-2">
-                              <span className={cn(
-                                "h-2 w-2 rounded-full",
-                                ws.status === 'active' ? 'bg-green-500' : 'bg-muted-foreground'
-                              )} />
+                              <span className={cn('h-2 w-2 rounded-full', ws.status === 'running' ? 'bg-green-500' : 'bg-muted-foreground')} />
                               {ws.name}
                             </span>
                           </SelectItem>
@@ -301,283 +285,93 @@ export function PlaygroundPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>MCP 服务</Label>
-                    <Select 
-                      value={selectedMCP} 
-                      onValueChange={(v) => {
-                        setSelectedMCP(v)
-                        setSelectedTool('')
-                        setParams({})
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择 MCP" />
-                      </SelectTrigger>
+                    <Label>Session</Label>
+                    <Select value={selectedSession} onValueChange={setSelectedSession}>
+                      <SelectTrigger><SelectValue placeholder="选择已有会话或新建" /></SelectTrigger>
                       <SelectContent>
-                        {runningMCPs.map((mcp) => (
-                          <SelectItem key={mcp.id} value={mcp.id}>
-                            <span className="flex items-center gap-2">
-                              <span>{mcp.icon}</span>
-                              <span>{mcp.name}</span>
-                              <Badge variant="outline" className="text-xs">
-                                {mcp.tools.length} 工具
-                              </Badge>
-                            </span>
-                          </SelectItem>
+                        {sessions.map((session) => (
+                          <SelectItem key={session.id} value={session.id}>{session.id}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    <Button variant="outline" size="sm" onClick={handleCreateSession} disabled={!selectedWorkspace}>
+                      新建会话
+                    </Button>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>工具</Label>
-                    <Select 
-                      value={selectedTool} 
-                      onValueChange={(v) => {
-                        setSelectedTool(v)
-                        setParams({})
-                      }}
-                      disabled={!selectedMCP}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={selectedMCP ? "选择工具" : "请先选择 MCP"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedMCPData?.tools.map((tool) => (
-                          <SelectItem key={tool.name} value={tool.name}>
-                            <span className="flex flex-col items-start">
-                              <span className="font-mono text-sm">{tool.name}</span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {selectedToolData && (
-                      <p className="text-xs text-muted-foreground">
-                        {selectedToolData.description}
-                      </p>
-                    )}
-                  </div>
-
-                  {selectedToolData && (
-                    <div className="space-y-3 pt-2 border-t border-border">
-                      <Label className="text-muted-foreground">参数</Label>
-                      {selectedToolData.parameters.map((param) => (
-                        <div key={param.name} className="space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            <Label htmlFor={param.name} className="text-sm font-mono">
-                              {param.name}
-                            </Label>
-                            <Badge variant="outline" className="text-xs font-normal">
-                              {param.type}
-                            </Badge>
-                            {param.required && (
-                              <span className="text-xs text-destructive">*</span>
-                            )}
-                          </div>
-                          <Input
-                            id={param.name}
-                            placeholder={param.description}
-                            value={params[param.name] || ''}
-                            onChange={(e) => handleParamChange(param.name, e.target.value)}
-                            className="font-mono text-sm"
-                          />
-                        </div>
+                    <Label>当前工作空间服务</Label>
+                    <div className="flex flex-wrap gap-2 rounded-xl border bg-muted/30 p-3">
+                      {services.map((service) => (
+                        <Badge key={service.name} variant="outline">{service.name} · {service.tools_count} 工具</Badge>
                       ))}
+                      {!services.length && <span className="text-sm text-muted-foreground">暂无服务</span>}
                     </div>
-                  )}
-
-                  <Button
-                    className="w-full"
-                    onClick={handleExecute}
-                    disabled={isExecuting || !selectedTool}
-                    size="lg"
-                  >
-                    {isExecuting ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        执行中...
-                      </>
-                    ) : (
-                      <>
-                        <Play className="mr-2 h-4 w-4" />
-                        执行工具
-                      </>
-                    )}
-                  </Button>
+                  </div>
                 </TabsContent>
 
-                <TabsContent value="history" className="mt-0">
-                  {history.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-center">
-                      <Terminal className="h-10 w-10 text-muted-foreground/50" />
-                      <p className="mt-3 text-sm text-muted-foreground">
-                        暂无执行历史
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        执行工具后，历史记录将显示在这里
-                      </p>
-                    </div>
-                  ) : (
+                <TabsContent value="history" className="mt-0 space-y-3">
+                  <div className="flex items-center justify-end">
+                    <Button variant="ghost" size="sm" onClick={clearHistory}>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      清空历史
+                    </Button>
+                  </div>
+                  <ScrollArea className="h-[300px]">
                     <div className="space-y-2">
-                      <div className="flex justify-end">
-                        <Button variant="ghost" size="sm" onClick={clearHistory}>
-                          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                          清除
-                        </Button>
-                      </div>
-                      <ScrollArea className="h-[300px]">
-                        <div className="space-y-2">
-                          {history.map((call) => (
-                            <div
-                              key={call.id}
-                              className={cn(
-                                'rounded-lg border p-3 cursor-pointer transition-colors hover:bg-muted/50',
-                                call.status === 'success' && 'border-green-500/30',
-                                call.status === 'error' && 'border-red-500/30',
-                                call.status === 'pending' && 'border-border'
-                              )}
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  {call.status === 'pending' && (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                  )}
-                                  {call.status === 'success' && (
-                                    <CheckCircle className="h-3.5 w-3.5 text-green-500" />
-                                  )}
-                                  {call.status === 'error' && (
-                                    <XCircle className="h-3.5 w-3.5 text-red-500" />
-                                  )}
-                                  <code className="text-sm font-medium">{call.tool}</code>
-                                </div>
-                                {call.duration && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {call.duration}ms
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {call.mcp}
-                              </p>
+                      {history.map((item) => (
+                        <div key={item.id} className="rounded-lg border bg-muted/30 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">{item.title}</p>
+                              <p className="truncate text-xs text-muted-foreground">{new Date(item.timestamp).toLocaleTimeString('zh-CN')}</p>
                             </div>
-                          ))}
+                            <div className="flex items-center gap-1">
+                              {item.status === 'pending' && <Loader2 className="h-4 w-4 animate-spin text-amber-500" />}
+                              {item.status === 'success' && <CheckCircle className="h-4 w-4 text-emerald-500" />}
+                              {item.status === 'error' && <XCircle className="h-4 w-4 text-red-500" />}
+                            </div>
+                          </div>
+                          {item.duration != null && <p className="mt-2 text-xs text-muted-foreground">耗时 {item.duration}ms</p>}
                         </div>
-                      </ScrollArea>
+                      ))}
+                      {!history.length && <p className="text-sm text-muted-foreground">还没有执行记录。</p>}
                     </div>
-                  )}
+                  </ScrollArea>
                 </TabsContent>
               </CardContent>
             </Tabs>
           </Card>
         </div>
 
-        {/* Right Panel - Result */}
-        <div className="lg:col-span-3">
-          <Card className="h-full min-h-[600px]">
-            <CardHeader className="pb-3 border-b border-border">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Terminal className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-lg">执行结果</CardTitle>
-                </div>
-                {history.length > 0 && history[0].result && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => copyResult(history[0].result)}
-                  >
-                    <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    复制
-                  </Button>
-                )}
-              </div>
+        <div className="space-y-6 lg:col-span-3">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">请求编辑器</CardTitle>
+              <CardDescription>直接向网关发送 JSON-RPC 请求，协议：{meta?.gateway_protocol || 'sse'}</CardDescription>
             </CardHeader>
-            <CardContent className="p-0">
-              {history.length === 0 || !history[0] ? (
-                <div className="flex flex-col items-center justify-center h-[500px] text-center px-4">
-                  <div className="h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
-                    <Terminal className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                  <h3 className="font-semibold text-lg mb-2">准备就绪</h3>
-                  <p className="text-muted-foreground max-w-sm text-sm">
-                    选择一个 MCP 和工具，配置参数后点击执行，结果将实时显示在这里
-                  </p>
-                  <div className="mt-6 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Sparkles className="h-4 w-4" />
-                    <span>试试左边的快速示例开始探索</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 space-y-4">
-                  {/* Latest Call Info */}
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                    <div className="flex items-center gap-3">
-                      {history[0].status === 'pending' && (
-                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                      )}
-                      {history[0].status === 'success' && (
-                        <CheckCircle className="h-5 w-5 text-green-500" />
-                      )}
-                      {history[0].status === 'error' && (
-                        <XCircle className="h-5 w-5 text-red-500" />
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <code className="font-semibold">{history[0].tool}</code>
-                          <Badge variant="outline">{history[0].mcp}</Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(history[0].timestamp).toLocaleString('zh-CN')}
-                        </p>
-                      </div>
-                    </div>
-                    {history[0].duration && (
-                      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                        <Clock className="h-4 w-4" />
-                        <span>{history[0].duration}ms</span>
-                      </div>
-                    )}
-                  </div>
+            <CardContent className="space-y-4">
+              <Textarea value={requestBody} onChange={(e) => setRequestBody(e.target.value)} rows={14} className="font-mono text-sm" />
+              <div className="flex gap-2">
+                <Button onClick={handleExecute} disabled={isExecuting}>
+                  <Play className="mr-2 h-4 w-4" />
+                  {isExecuting ? '发送中...' : '发送'}
+                </Button>
+                <Button variant="outline" onClick={() => navigator.clipboard.writeText(requestBody)}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  复制请求
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-                  {/* Request */}
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-                      请求参数
-                    </p>
-                    <pre className="rounded-lg bg-muted p-4 text-sm overflow-auto font-mono">
-                      {JSON.stringify(history[0].params, null, 2)}
-                    </pre>
-                  </div>
-
-                  {/* Response */}
-                  {history[0].status !== 'pending' && (
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-                        {history[0].status === 'success' ? '响应结果' : '错误信息'}
-                      </p>
-                      {history[0].result ? (
-                        <pre className="rounded-lg bg-green-500/5 border border-green-500/20 p-4 text-sm overflow-auto font-mono text-green-700 dark:text-green-400">
-                          {JSON.stringify(history[0].result, null, 2)}
-                        </pre>
-                      ) : (
-                        <pre className="rounded-lg bg-red-500/5 border border-red-500/20 p-4 text-sm overflow-auto font-mono text-red-600 dark:text-red-400">
-                          {history[0].error}
-                        </pre>
-                      )}
-                    </div>
-                  )}
-
-                  {history[0].status === 'pending' && (
-                    <div className="flex items-center justify-center py-8">
-                      <div className="flex items-center gap-3 text-muted-foreground">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        <span>正在执行...</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">响应结果</CardTitle>
+              <CardDescription>展示网关原始返回内容</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Textarea value={responseText} readOnly rows={14} className="font-mono text-sm" />
             </CardContent>
           </Card>
         </div>

@@ -1,9 +1,22 @@
 'use client'
 
-import { useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { useMemo, useState } from 'react'
+import Link from 'next/link'
+import {
+  Calendar,
+  MoreHorizontal,
+  Package,
+  Play,
+  RefreshCw,
+  Search,
+  Settings,
+  Square,
+  Wrench,
+} from 'lucide-react'
+
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -16,20 +29,6 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { installedMCPs } from '@/lib/mock-data'
-import type { MCPServer } from '@/lib/types'
-import {
-  Search,
-  Play,
-  Square,
-  Settings,
-  Trash2,
-  MoreHorizontal,
-  Package,
-  RefreshCw,
-  Wrench,
-  Calendar,
-} from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,11 +37,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
-import Link from 'next/link'
+import { gatewayApi, invalidate, useGatewaySWR, type InstalledItem, type ListData } from '@/lib/gateway-api'
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  return date.toLocaleDateString('zh-CN', {
+function formatDate(dateString: string) {
+  return new Date(dateString).toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -50,47 +48,45 @@ function formatDate(dateString: string): string {
 }
 
 export function InstalledPage() {
+  const { data } = useGatewaySWR<ListData<InstalledItem>>('/api/v1/installed')
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedMCP, setSelectedMCP] = useState<MCPServer | null>(null)
+  const [selectedItem, setSelectedItem] = useState<InstalledItem | null>(null)
   const [isConfigOpen, setIsConfigOpen] = useState(false)
 
-  const filteredMCPs = installedMCPs.filter(
-    (mcp) =>
-      mcp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      mcp.description.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const items = useMemo(() => {
+    const list = data?.items || []
+    if (!searchQuery) return list
+    const q = searchQuery.toLowerCase()
+    return list.filter((item) => `${item.package_name} ${item.workspace_name} ${item.service_name}`.toLowerCase().includes(q))
+  }, [data?.items, searchQuery])
 
-  const handleConfigure = (mcp: MCPServer) => {
-    setSelectedMCP(mcp)
+  async function handleStatusAction(item: InstalledItem) {
+    if (item.status === 'running') {
+      await gatewayApi.stopService(item.workspace_id, item.service_name)
+    } else {
+      await gatewayApi.startService(item.workspace_id, item.service_name)
+    }
+    await Promise.all([invalidate('/api/v1/installed'), invalidate(`/api/v1/workspaces/${item.workspace_id}/services`)])
+  }
+
+  function openConfig(item: InstalledItem) {
+    setSelectedItem(item)
     setIsConfigOpen(true)
   }
 
-  const runningCount = installedMCPs.filter((m) => m.status === 'running').length
-  const stoppedCount = installedMCPs.filter((m) => m.status === 'stopped').length
-
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">已安装 MCP</h2>
-          <p className="text-muted-foreground">管理和配置已安装的 MCP 服务</p>
+          <p className="text-muted-foreground">查看不同工作空间中已安装的 MCP 服务</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" asChild>
-            <Link href="/market">
-              <Package className="mr-2 h-4 w-4" />
-              浏览市场
-            </Link>
-          </Button>
-          <Button variant="outline">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            检查更新
-          </Button>
-        </div>
+        <Button variant="outline" onClick={() => invalidate('/api/v1/installed')}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          刷新
+        </Button>
       </div>
 
-      {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="p-6">
@@ -99,7 +95,7 @@ export function InstalledPage() {
                 <Package className="h-6 w-6 text-violet-600 dark:text-violet-400" />
               </div>
               <div>
-                <p className="text-3xl font-bold">{installedMCPs.length}</p>
+                <p className="text-3xl font-bold">{data?.items.length ?? 0}</p>
                 <p className="text-sm text-muted-foreground">已安装</p>
               </div>
             </div>
@@ -112,7 +108,9 @@ export function InstalledPage() {
                 <Play className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
               </div>
               <div>
-                <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{runningCount}</p>
+                <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">
+                  {data?.items.filter((v) => v.status === 'running').length ?? 0}
+                </p>
                 <p className="text-sm text-muted-foreground">运行中</p>
               </div>
             </div>
@@ -121,117 +119,100 @@ export function InstalledPage() {
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center gap-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
-                <Square className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-900/30">
+                <RefreshCw className="h-6 w-6 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
-                <p className="text-3xl font-bold text-slate-600 dark:text-slate-400">{stoppedCount}</p>
-                <p className="text-sm text-muted-foreground">已停止</p>
+                <p className="text-3xl font-bold text-amber-600 dark:text-amber-400">
+                  {data?.items.filter((v) => v.installed_version !== v.latest_version).length ?? 0}
+                </p>
+                <p className="text-sm text-muted-foreground">可升级</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="搜索已安装 MCP..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full bg-muted/50 border-transparent pl-9 focus:border-border focus:bg-background sm:max-w-sm"
+          className="w-full border-transparent bg-muted/50 pl-9 focus:border-border focus:bg-background sm:max-w-sm"
         />
       </div>
 
-      {/* MCP List */}
       <div className="space-y-3">
-        {filteredMCPs.map((mcp) => (
-          <Card key={mcp.id} className="group transition-all hover:shadow-sm hover:border-primary/20">
+        {items.map((item) => (
+          <Card key={`${item.workspace_id}-${item.service_name}`} className="group transition-all hover:border-primary/20 hover:shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-2xl">
-                    {mcp.icon}
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted text-lg font-semibold text-primary">
+                    {item.package_name.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold">{mcp.name}</h3>
+                      <h3 className="font-semibold">{item.package_name}</h3>
                       <Badge
                         className={cn(
                           'border-0',
-                          mcp.status === 'running'
+                          item.status === 'running'
                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                            : mcp.status === 'stopped'
-                            ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
-                            : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                            : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
                         )}
                       >
-                        {mcp.status === 'running'
-                          ? '运行中'
-                          : mcp.status === 'stopped'
-                          ? '已停止'
-                          : '错误'}
+                        {item.status === 'running' ? '运行中' : item.status === 'failed' ? '错误' : '已停止'}
                       </Badge>
+                      {item.installed_version !== item.latest_version && (
+                        <Badge variant="outline" className="border-amber-200 text-amber-700 dark:border-amber-800 dark:text-amber-400">
+                          可升级至 v{item.latest_version}
+                        </Badge>
+                      )}
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
-                      {mcp.description}
-                    </p>
-                    <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                      <span>v{mcp.version}</span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        {formatDate(mcp.installedAt!)}
-                      </span>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      服务名 {item.service_name}，部署在 {item.workspace_name}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <Wrench className="h-3 w-3" />
-                        {mcp.tools.length} 个工具
+                        工作空间 {item.workspace_name}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        {formatDate(item.installed_at)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Package className="h-3 w-3" />
+                        当前 v{item.installed_version}
                       </span>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {mcp.status === 'running' ? (
-                    <Button variant="outline" size="sm" className="hidden sm:flex">
-                      <Square className="mr-2 h-4 w-4" />
-                      停止
-                    </Button>
-                  ) : (
-                    <Button variant="outline" size="sm" className="hidden sm:flex">
-                      <Play className="mr-2 h-4 w-4" />
-                      启动
-                    </Button>
-                  )}
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => handleStatusAction(item)}>
+                    {item.status === 'running' ? <Square className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+                    {item.status === 'running' ? '停止' : '启动'}
+                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon">
+                      <Button variant="ghost" size="icon" className="h-9 w-9">
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {mcp.status === 'running' ? (
-                        <DropdownMenuItem className="sm:hidden">
-                          <Square className="mr-2 h-4 w-4" />
-                          停止
-                        </DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem className="sm:hidden">
-                          <Play className="mr-2 h-4 w-4" />
-                          启动
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem onClick={() => handleConfigure(mcp)}>
+                      <DropdownMenuItem onClick={() => openConfig(item)}>
                         <Settings className="mr-2 h-4 w-4" />
-                        配置
+                        配置预览
                       </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        更新
+                      <DropdownMenuItem asChild>
+                        <Link href={`/workspaces/${item.workspace_id}`}>前往工作空间</Link>
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive focus:text-destructive">
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        卸载
+                      <DropdownMenuItem onClick={() => invalidate('/api/v1/installed')}>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        刷新状态
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -240,81 +221,53 @@ export function InstalledPage() {
             </CardContent>
           </Card>
         ))}
+        {items.length === 0 && <p className="text-sm text-muted-foreground">暂无已安装 MCP。</p>}
       </div>
 
-      {filteredMCPs.length === 0 && (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-              <Package className="h-7 w-7 text-muted-foreground" />
-            </div>
-            <h3 className="mt-4 text-lg font-semibold">未安装 MCP</h3>
-            <p className="mt-2 max-w-sm text-muted-foreground">
-              {searchQuery
-                ? '没有匹配的 MCP，请尝试其他搜索词'
-                : '前往市场安装您的第一个 MCP'}
-            </p>
-            {!searchQuery && (
-              <Button className="mt-6" asChild>
-                <Link href="/market">
-                  <Package className="mr-2 h-4 w-4" />
-                  浏览市场
-                </Link>
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Configure Dialog */}
       <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
-        {selectedMCP && (
+        {selectedItem && (
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted text-2xl">
-                  {selectedMCP.icon}
-                </div>
-                <div>
-                  <DialogTitle>{selectedMCP.name} 配置</DialogTitle>
-                  <DialogDescription>
-                    配置 MCP 的环境变量和工具权限
-                  </DialogDescription>
-                </div>
-              </div>
+              <DialogTitle>{selectedItem.package_name} 配置预览</DialogTitle>
+              <DialogDescription>保留原型阶段的配置体验，但当前仍以真实运行数据为准。</DialogDescription>
             </DialogHeader>
 
-            <Tabs defaultValue="env" className="mt-2">
+            <Tabs defaultValue="meta" className="mt-2">
               <TabsList className="inline-flex h-auto gap-1 rounded-lg bg-muted p-1">
-                <TabsTrigger value="env" className="rounded-md px-3 py-1.5 text-sm">环境变量</TabsTrigger>
+                <TabsTrigger value="meta" className="rounded-md px-3 py-1.5 text-sm">基本信息</TabsTrigger>
                 <TabsTrigger value="tools" className="rounded-md px-3 py-1.5 text-sm">工具权限</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="env" className="mt-4 space-y-4">
-                <div className="space-y-4">
+              <TabsContent value="meta" className="mt-4 space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>API_KEY</Label>
-                    <Input type="password" placeholder="输入 API 密钥" />
+                    <Label>包名</Label>
+                    <div className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">{selectedItem.package_name}</div>
                   </div>
                   <div className="space-y-2">
-                    <Label>BASE_URL</Label>
-                    <Input placeholder="https://api.example.com" />
+                    <Label>服务名</Label>
+                    <div className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">{selectedItem.service_name}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>工作空间</Label>
+                    <div className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">{selectedItem.workspace_name}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>版本</Label>
+                    <div className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">
+                      当前 v{selectedItem.installed_version} / 最新 v{selectedItem.latest_version}
+                    </div>
                   </div>
                 </div>
               </TabsContent>
 
               <TabsContent value="tools" className="mt-4">
                 <div className="space-y-3">
-                  {selectedMCP.tools.map((tool) => (
-                    <div
-                      key={tool.name}
-                      className="flex items-center justify-between rounded-xl border bg-muted/30 p-4"
-                    >
+                  {['工具发现', '执行权限', '日志采集'].map((tool) => (
+                    <div key={tool} className="flex items-center justify-between rounded-xl border bg-muted/30 p-4">
                       <div>
-                        <p className="font-mono font-medium">{tool.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {tool.description}
-                        </p>
+                        <p className="font-medium">{tool}</p>
+                        <p className="text-sm text-muted-foreground">保留原型的细节配置表现，后续可继续接真实权限模型。</p>
                       </div>
                       <Switch defaultChecked />
                     </div>
@@ -323,11 +276,11 @@ export function InstalledPage() {
               </TabsContent>
             </Tabs>
 
-            <DialogFooter className="mt-4">
-              <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
-                取消
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsConfigOpen(false)}>关闭</Button>
+              <Button asChild>
+                <Link href={`/workspaces/${selectedItem.workspace_id}`}>前往工作空间继续配置</Link>
               </Button>
-              <Button onClick={() => setIsConfigOpen(false)}>保存配置</Button>
             </DialogFooter>
           </DialogContent>
         )}

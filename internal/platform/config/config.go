@@ -49,9 +49,46 @@ func (c *Config) Default() {
 	}
 	if c.Auth == nil {
 		c.Auth = &AuthConfig{
-			Enabled: true,
-			ApiKey:  "123456", // 默认的API Key, 可在header或者query中使用
+			Enabled:               true,
+			Mode:                  "single-key",
+			ApiKey:                "123456", // 默认的API Key, 可在header或者query中使用
+			AllowRegister:         false,
+			JWTSecret:             "gateway-dev-secret",
+			AccessTokenTTLMinutes: 120,
+			RefreshTokenTTLHours:  720,
+			MongoURI:              "mongodb://127.0.0.1:27017",
+			MongoDatabase:         "mcp_gateway",
+			AdminEmail:            "admin@gateway.local",
+			AdminPassword:         "admin123456",
+			AdminDisplayName:      "Gateway Admin",
 		}
+	}
+	if c.Auth.Mode == "" {
+		c.Auth.Mode = "single-key"
+	}
+	if c.Auth.JWTSecret == "" {
+		c.Auth.JWTSecret = "gateway-dev-secret"
+	}
+	if c.Auth.AccessTokenTTLMinutes == 0 {
+		c.Auth.AccessTokenTTLMinutes = 120
+	}
+	if c.Auth.RefreshTokenTTLHours == 0 {
+		c.Auth.RefreshTokenTTLHours = 720
+	}
+	if c.Auth.MongoURI == "" {
+		c.Auth.MongoURI = "mongodb://127.0.0.1:27017"
+	}
+	if c.Auth.MongoDatabase == "" {
+		c.Auth.MongoDatabase = "mcp_gateway"
+	}
+	if c.Auth.AdminEmail == "" {
+		c.Auth.AdminEmail = "admin@gateway.local"
+	}
+	if c.Auth.AdminPassword == "" {
+		c.Auth.AdminPassword = "admin123456"
+	}
+	if c.Auth.AdminDisplayName == "" {
+		c.Auth.AdminDisplayName = "Gateway Admin"
 	}
 	if c.SessionGCInterval == 0 {
 		c.SessionGCInterval = 10 * time.Second
@@ -77,16 +114,36 @@ func (c *Config) IsStreamHTTP() bool {
 func (c *Config) GetAuthConfig() *AuthConfig {
 	if c.Auth == nil {
 		c.Auth = &AuthConfig{
-			Enabled: true,
-			ApiKey:  "123456", // 默认的API Key, 可在header或者query中使用
+			Enabled:               true,
+			Mode:                  "single-key",
+			ApiKey:                "123456", // 默认的API Key, 可在header或者query中使用
+			AllowRegister:         false,
+			JWTSecret:             "gateway-dev-secret",
+			AccessTokenTTLMinutes: 120,
+			RefreshTokenTTLHours:  720,
+			MongoURI:              "mongodb://127.0.0.1:27017",
+			MongoDatabase:         "mcp_gateway",
+			AdminEmail:            "admin@gateway.local",
+			AdminPassword:         "admin123456",
+			AdminDisplayName:      "Gateway Admin",
 		}
 	}
 	return c.Auth
 }
 
 type AuthConfig struct {
-	Enabled bool
-	ApiKey  string
+	Enabled               bool
+	Mode                  string
+	ApiKey                string
+	AllowRegister         bool
+	JWTSecret             string
+	AccessTokenTTLMinutes int
+	RefreshTokenTTLHours  int
+	MongoURI              string
+	MongoDatabase         string
+	AdminEmail            string
+	AdminPassword         string
+	AdminDisplayName      string
 }
 
 func (c *AuthConfig) IsEnabled() bool {
@@ -95,6 +152,13 @@ func (c *AuthConfig) IsEnabled() bool {
 
 func (c *AuthConfig) GetApiKey() string {
 	return c.ApiKey
+}
+
+func (c *AuthConfig) GetMode() string {
+	if c.Mode == "" {
+		return "single-key"
+	}
+	return c.Mode
 }
 
 type McpServiceMgrConfig struct {

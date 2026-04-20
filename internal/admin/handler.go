@@ -4,6 +4,8 @@ import (
 	"sync"
 
 	"github.com/labstack/echo/v4"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
 )
@@ -13,12 +15,20 @@ import (
 // 避免同一时间多个请求对同一个 workspace 状态机造成抖动。
 type Handler struct {
 	services workspaces.ServiceManagerI
+	cfg      *config.Config
+	auth     *identity.Service
+	state    *controlPlaneState
 	mu       sync.RWMutex
 }
 
 // NewHandler 构造一个 admin Handler。
-func NewHandler(services workspaces.ServiceManagerI) *Handler {
-	return &Handler{services: services}
+func NewHandler(services workspaces.ServiceManagerI, cfg *config.Config, auth *identity.Service) *Handler {
+	return &Handler{
+		services: services,
+		cfg:      cfg,
+		auth:     auth,
+		state:    newControlPlaneState(),
+	}
 }
 
 // Register 挂载所有管理 API 到 Echo：
@@ -27,12 +37,15 @@ func NewHandler(services workspaces.ServiceManagerI) *Handler {
 //   - /api/sessions/:id/status
 //   - debug 相关路由（通过 setupDebugRoutes）
 func (h *Handler) Register(e *echo.Echo) {
-	e.POST("/deploy", h.handleDeploy)
-	e.DELETE("/delete", h.handleDeleteMcpService)
-	e.GET("/services", h.handleGetAllServices)
-	e.GET("/services/:name/health", h.handleGetServiceHealth)
+	protected := e.Group("")
+	protected.Use(h.v1AuthMiddleware)
 
-	api := e.Group("/api")
+	protected.POST("/deploy", h.handleDeploy)
+	protected.DELETE("/delete", h.handleDeleteMcpService)
+	protected.GET("/services", h.handleGetAllServices)
+	protected.GET("/services/:name/health", h.handleGetServiceHealth)
+
+	api := protected.Group("/api")
 	api.GET("/workspaces", h.handleGetAllWorkspaces)
 	api.POST("/workspaces", h.handleCreateWorkspace)
 	api.DELETE("/workspaces/:id", h.handleDeleteWorkspace)
@@ -52,4 +65,5 @@ func (h *Handler) Register(e *echo.Echo) {
 	api.GET("/workspaces/:workspace/services/:name/logs", h.handleGetServiceLogs)
 
 	h.setupDebugRoutes(api)
+	h.registerV1Routes(e)
 }

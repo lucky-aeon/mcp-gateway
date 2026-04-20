@@ -1,37 +1,108 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Server, Shield, Zap } from 'lucide-react'
+import { Loader2, KeyRound, Server, Shield, Zap } from 'lucide-react'
+import { gatewayApi, GatewayApiError, hasGatewayAuth, saveGatewayApiKey, saveGatewayRefreshToken } from '@/lib/gateway-api'
+import { useAppStore } from '@/lib/store'
 
 export default function LoginPage() {
   const router = useRouter()
+  const { setCurrentUser } = useAppStore()
   const [isLoading, setIsLoading] = useState(false)
+  const [metaLoading, setMetaLoading] = useState(true)
+  const [mode, setMode] = useState<'single-key' | 'saas'>('single-key')
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [allowRegister, setAllowRegister] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [apiKey, setApiKey] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function bootstrap() {
+      try {
+        const meta = await gatewayApi.getMeta()
+        if (cancelled) return
+        setMode(meta.mode === 'saas' ? 'saas' : 'single-key')
+        setAllowRegister(meta.allow_register || false)
+
+        if (hasGatewayAuth()) {
+          try {
+            await gatewayApi.getMe()
+            router.replace('/dashboard')
+            return
+          } catch {
+            // 忽略旧 token / api key，留在登录页重新输入
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : '无法获取登录模式')
+        }
+      } finally {
+        if (!cancelled) setMetaLoading(false)
+      }
+    }
+
+    bootstrap()
+    return () => {
+      cancelled = true
+    }
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setIsLoading(true)
 
-    // Simulate login
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      if (authMode === 'register') {
+        await gatewayApi.register({ email, password, display_name: displayName || undefined })
+        // 注册成功后切换到登录模式
+        setAuthMode('login')
+        setError('')
+        setIsLoading(false)
+        return
+      }
 
-    if (email === 'admin@gateway.local' && password === 'admin') {
-      localStorage.setItem('isLoggedIn', 'true')
+      let result
+      if (mode === 'single-key') {
+        result = await gatewayApi.login({ api_key: apiKey })
+        saveGatewayApiKey(result.token || apiKey, rememberMe)
+      } else {
+        result = await gatewayApi.login({ email, password })
+        saveGatewayApiKey(result.token, rememberMe)
+        if (result.refresh_token) {
+          saveGatewayRefreshToken(result.refresh_token, rememberMe)
+        }
+      }
+      // 设置用户信息到 store
+      setCurrentUser(result.user)
       router.push('/dashboard')
-    } else {
-      setError('邮箱或密码错误')
+    } catch (e) {
+      if (e instanceof GatewayApiError) {
+        setError(e.message)
+      } else {
+        setError(authMode === 'register' ? '注册失败，请稍后重试' : '登录失败，请稍后重试')
+      }
+    } finally {
       setIsLoading(false)
     }
+  }
+
+  const toggleAuthMode = () => {
+    setAuthMode(authMode === 'login' ? 'register' : 'login')
+    setError('')
   }
 
   const features = [
@@ -96,12 +167,28 @@ export default function LoginPage() {
               </div>
               <span className="text-xl font-bold">Gateway Admin</span>
             </div>
-            <CardTitle className="text-2xl">欢迎回来</CardTitle>
+            <CardTitle className="text-2xl">
+              {mode === 'single-key'
+                ? '接入控制台'
+                : authMode === 'register'
+                  ? '创建账户'
+                  : '欢迎回来'}
+            </CardTitle>
             <CardDescription>
-              登录您的账户以访问管理控制台
+              {mode === 'single-key'
+                ? '当前实例为 single-key 模式，请输入 API Key 访问管理控制台'
+                : authMode === 'register'
+                  ? '注册新账户以访问管理控制台'
+                  : '登录您的账户以访问管理控制台'}
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {metaLoading ? (
+              <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                正在获取登录模式...
+              </div>
+            ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
                 <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -109,38 +196,75 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <div className="space-y-2">
-                <Label htmlFor="email">邮箱</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@gateway.local"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="email"
-                  className="h-11"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">密码</Label>
-                  <Button variant="link" className="h-auto p-0 text-sm text-muted-foreground">
-                    忘记密码？
-                  </Button>
+              {mode === 'single-key' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="api-key">API Key</Label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="api-key"
+                      type="password"
+                      placeholder="输入 Gateway API Key"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      required
+                      autoComplete="off"
+                      className="h-11 pl-9"
+                    />
+                  </div>
                 </div>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="输入密码"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                  className="h-11"
-                />
-              </div>
+              ) : (
+                <>
+                  {authMode === 'register' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="display-name">显示名称</Label>
+                      <Input
+                        id="display-name"
+                        type="text"
+                        placeholder="输入显示名称"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        autoComplete="name"
+                        className="h-11"
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="email">邮箱</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="admin@gateway.local"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      autoComplete={authMode === 'register' ? 'email' : 'email'}
+                      className="h-11"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="password">密码</Label>
+                      {authMode === 'login' && (
+                        <Button variant="link" className="h-auto p-0 text-sm text-muted-foreground">
+                          忘记密码？
+                        </Button>
+                      )}
+                    </div>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder={authMode === 'register' ? '设置密码' : '输入密码'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                      className="h-11"
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="flex items-center gap-2">
                 <Checkbox 
@@ -157,17 +281,44 @@ export default function LoginPage() {
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    登录中...
+                    {authMode === 'register' ? '注册中...' : '登录中...'}
                   </>
                 ) : (
-                  '登录'
+                  authMode === 'register' ? '注册' : '登录'
                 )}
               </Button>
 
-              <p className="text-center text-sm text-muted-foreground">
-                演示账号：admin@gateway.local / admin
-              </p>
+              {mode === 'saas' && allowRegister && (
+                <p className="text-center text-sm">
+                  {authMode === 'login' ? (
+                    <>
+                      还没有账户？{' '}
+                      <Button variant="link" className="h-auto p-0 text-sm" onClick={toggleAuthMode}>
+                        立即注册
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      已有账户？{' '}
+                      <Button variant="link" className="h-auto p-0 text-sm" onClick={toggleAuthMode}>
+                        立即登录
+                      </Button>
+                    </>
+                  )}
+                </p>
+              )}
+
+              {mode === 'saas' && !allowRegister && authMode === 'login' ? (
+                <p className="text-center text-sm text-muted-foreground">
+                  演示账号：admin@gateway.local / admin123456
+                </p>
+              ) : mode === 'single-key' ? (
+                <p className="text-center text-sm text-muted-foreground">
+                  API Key 由 Gateway 管理员分发，登录成功后才会请求受保护接口
+                </p>
+              ) : null}
             </form>
+            )}
           </CardContent>
         </Card>
       </div>

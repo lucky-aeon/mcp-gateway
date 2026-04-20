@@ -30,21 +30,22 @@ interface NavItem {
   label: string
   icon: React.ComponentType<{ className?: string }>
   matchPattern?: RegExp
+  requireSystemAdmin?: boolean
 }
 
 const navItems: NavItem[] = [
   { href: '/dashboard', label: '概览', icon: LayoutDashboard },
-  { href: '/ops-dashboard', label: '运维看板', icon: BarChart3 },
+  { href: '/ops-dashboard', label: '运维看板', icon: BarChart3, requireSystemAdmin: true },
   { href: '/workspaces', label: '工作空间', icon: Layers, matchPattern: /^\/workspaces/ },
   { href: '/market', label: 'MCP 市场', icon: Store },
   { href: '/installed', label: '已安装', icon: Package },
   { href: '/api-keys', label: 'API 密钥', icon: Key },
   { href: '/playground', label: 'Playground', icon: Play },
-  { href: '/setup', label: '设置', icon: Settings },
+  { href: '/setup', label: '设置', icon: Settings, requireSystemAdmin: true },
 ]
 
 export function Sidebar() {
-  const { sidebarOpen, setSidebarOpen } = useAppStore()
+  const { sidebarOpen, setSidebarOpen, currentUser } = useAppStore()
   const pathname = usePathname()
 
   const isActive = (item: NavItem) => {
@@ -53,6 +54,14 @@ export function Sidebar() {
     }
     return pathname === item.href
   }
+
+  // 根据用户权限过滤菜单项
+  const filteredNavItems = navItems.filter((item) => {
+    if (item.requireSystemAdmin) {
+      return currentUser?.builtin === true
+    }
+    return true
+  })
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -79,7 +88,7 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          {navItems.map((item) => {
+          {filteredNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
 

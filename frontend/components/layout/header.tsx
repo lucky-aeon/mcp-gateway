@@ -22,6 +22,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { clearGatewayAuth, useGatewaySWR, type MeInfo } from '@/lib/gateway-api'
 
 const routeTitles: Record<string, { title: string; description?: string }> = {
   '/': { title: '概览', description: '系统运行状态和快速操作' },
@@ -96,12 +97,13 @@ export function Header() {
   const { sidebarOpen } = useAppStore()
   const pathname = usePathname()
   const router = useRouter()
+  const { data: me } = useGatewaySWR<MeInfo>('/api/v1/auth/me')
 
   const breadcrumbs = getBreadcrumbs(pathname)
   const unreadCount = notifications.filter((n) => !n.read).length
 
   const handleLogout = () => {
-    localStorage.removeItem('isLoggedIn')
+    clearGatewayAuth()
     router.push('/login')
   }
 
@@ -223,8 +225,8 @@ export function Header() {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>
               <div className="flex flex-col">
-                <span>管理员</span>
-                <span className="text-xs font-normal text-muted-foreground">admin@gateway.local</span>
+                <span>{me?.display_name || '管理员'}</span>
+                <span className="text-xs font-normal text-muted-foreground">{me?.email || 'single-key 模式'}</span>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

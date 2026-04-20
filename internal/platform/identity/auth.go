@@ -14,10 +14,11 @@ import (
 
 type AuthMiddleware struct {
 	config *config.Config
+	auth   *Service
 }
 
-func NewAuthMiddleware(cfg *config.Config) *AuthMiddleware {
-	return &AuthMiddleware{config: cfg}
+func NewAuthMiddleware(cfg *config.Config, auth *Service) *AuthMiddleware {
+	return &AuthMiddleware{config: cfg, auth: auth}
 }
 
 func (m *AuthMiddleware) GetKeyAuthConfig() middleware.KeyAuthConfig {
@@ -41,9 +42,16 @@ func (m *AuthMiddleware) KeyAuthValidator(key string, c echo.Context) (bool, err
 		xl.Infof("Auth config not found")
 		return false, errs.ErrAuthConfigNotFound
 	}
-	xl.Infof("Auth key: %s, api key: %s", key, m.config.GetAuthConfig().GetApiKey())
-	if key == m.config.GetAuthConfig().GetApiKey() { // 验证API Key
-		return true, nil
+	if m.auth != nil {
+		if principal, err := m.auth.ValidateBearer(c.Request().Context(), key); err == nil {
+			c.Set("auth.principal", principal)
+			return true, nil
+		}
+	} else {
+		xl.Infof("Auth key: %s, api key: %s", key, m.config.GetAuthConfig().GetApiKey())
+		if key == m.config.GetAuthConfig().GetApiKey() { // 验证API Key
+			return true, nil
+		}
 	}
 
 	checkSession := false
