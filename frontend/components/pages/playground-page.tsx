@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { callGatewayMessage, gatewayApi, useGatewaySWR, type ListData, type MetaInfo, type Service, type Workspace } from '@/lib/gateway-api'
+import { runAction } from '@/lib/action-feedback'
 
 interface ToolCall {
   id: string
@@ -81,6 +82,7 @@ export function PlaygroundPage() {
   const [responseText, setResponseText] = useState('')
   const [history, setHistory] = useState<ToolCall[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
+  const [creatingSession, setCreatingSession] = useState(false)
   const [activeTab, setActiveTab] = useState('config')
 
   useEffect(() => {
@@ -96,8 +98,15 @@ export function PlaygroundPage() {
 
   async function handleCreateSession() {
     if (!selectedWorkspace) return
-    const session = await gatewayApi.createSession(selectedWorkspace)
-    setSelectedSession(session.id)
+    setCreatingSession(true)
+    await runAction(
+      async () => {
+        const session = await gatewayApi.createSession(selectedWorkspace)
+        setSelectedSession(session.id)
+      },
+      { successTitle: '会话已创建', errorTitle: '创建会话失败' }
+    )
+    setCreatingSession(false)
   }
 
   async function handleExecute() {
@@ -294,8 +303,8 @@ export function PlaygroundPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button variant="outline" size="sm" onClick={handleCreateSession} disabled={!selectedWorkspace}>
-                      新建会话
+                    <Button variant="outline" size="sm" onClick={handleCreateSession} disabled={!selectedWorkspace || creatingSession}>
+                      {creatingSession ? '创建中...' : '新建会话'}
                     </Button>
                   </div>
 
@@ -357,7 +366,7 @@ export function PlaygroundPage() {
                   <Play className="mr-2 h-4 w-4" />
                   {isExecuting ? '发送中...' : '发送'}
                 </Button>
-                <Button variant="outline" onClick={() => navigator.clipboard.writeText(requestBody)}>
+                <Button variant="outline" onClick={() => runAction(() => navigator.clipboard.writeText(requestBody), { successTitle: '已复制', errorTitle: '复制失败' })}>
                   <Copy className="mr-2 h-4 w-4" />
                   复制请求
                 </Button>

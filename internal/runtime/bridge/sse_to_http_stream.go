@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	client "github.com/mark3labs/mcp-go/client"
@@ -50,6 +51,7 @@ func NewSSEToHTTPStreamBridge(ctx context.Context, sseBaseURL string, mcpName st
 	initResult, err := sseClient.Initialize(ctx, initRequest)
 	if err != nil {
 		logger.Error("Failed to initialize SSE client", "error", err)
+		_ = sseClient.Close()
 		return nil, fmt.Errorf("failed to initialize SSE client: %w", err)
 	}
 
@@ -255,7 +257,9 @@ func (b *SSEToHTTPStreamBridge) setupPromptBridge(ctx context.Context) error {
 func (b *SSEToHTTPStreamBridge) Start(addr string) error {
 	b.logger.Info("Starting HTTP Stream bridge server", "address", addr)
 
-	if err := b.Ping(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := b.Ping(ctx); err != nil {
 		b.logger.Error("Failed to ping SSE server", "error", err)
 		return fmt.Errorf("failed to ping SSE server: %w", err)
 	}

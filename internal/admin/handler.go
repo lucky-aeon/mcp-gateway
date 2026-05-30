@@ -18,16 +18,22 @@ type Handler struct {
 	cfg      *config.Config
 	auth     *identity.Service
 	state    *controlPlaneState
+	market   *marketStore
 	mu       sync.RWMutex
 }
 
 // NewHandler 构造一个 admin Handler。
 func NewHandler(services workspaces.ServiceManagerI, cfg *config.Config, auth *identity.Service) *Handler {
+	market := newMarketStore()
+	for _, adapter := range defaultMarketAdapters(nil) {
+		market.registerAdapter(adapter)
+	}
 	return &Handler{
 		services: services,
 		cfg:      cfg,
 		auth:     auth,
 		state:    newControlPlaneState(),
+		market:   market,
 	}
 }
 

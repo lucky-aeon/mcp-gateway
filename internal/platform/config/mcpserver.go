@@ -1,5 +1,7 @@
 package config
 
+import "sort"
+
 // MCPServerConfig 定义单个MCP服务器的配置
 type MCPServerConfig struct {
 	Workspace       string            `json:"workspace,omitempty"`
@@ -15,8 +17,9 @@ type MCPServerConfig struct {
 
 func (c *MCPServerConfig) GetEnvs() []string {
 	list := make([]string, 0, len(c.Env))
-	for s := range c.Env {
-		list = append(list, s)
+	for key, value := range c.Env {
+		list = append(list, key+"="+value)
 	}
+	sort.Strings(list)
 	return list
 }

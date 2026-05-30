@@ -42,8 +42,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { gatewayApi, invalidate, useGatewaySWR, GatewayApiError, type ListData, type LogEntry, type MarketPackage, type Service, type Session, type Workspace } from '@/lib/gateway-api'
+import { gatewayApi, invalidate, useGatewaySWR, GatewayApiError, type InstalledItem, type ListData, type LogEntry, type Service, type Session, type Workspace } from '@/lib/gateway-api'
 import { useToast } from '@/hooks/use-toast'
+import { runAction } from '@/lib/action-feedback'
 
 interface WorkspaceDetailPageProps {
   workspaceId: string
@@ -64,6 +65,10 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [isCustomOpen, setIsCustomOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [serviceActionKey, setServiceActionKey] = useState('')
+  const [sessionAction, setSessionAction] = useState(false)
+  const [addingInstalledId, setAddingInstalledId] = useState('')
+  const [savingSettings, setSavingSettings] = useState(false)
   const [logFilter, setLogFilter] = useState('all')
   const [settingsForm, setSettingsForm] = useState<{ name?: string; description?: string }>({})
   const [customForm, setCustomForm] = useState<{ name: string; protocol: string; url?: string; command?: string; args: string; env: string }>({
@@ -77,12 +82,12 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
   const { data: servicesData } = useGatewaySWR<ListData<Service>>(`/api/v1/workspaces/${workspaceId}/services`)
   const { data: sessionsData } = useGatewaySWR<ListData<Session>>(`/api/v1/workspaces/${workspaceId}/sessions`)
   const { data: logsData } = useGatewaySWR<{ logs: LogEntry[] }>(`/api/v1/workspaces/${workspaceId}/logs`)
-  const { data: marketData } = useGatewaySWR<ListData<MarketPackage>>('/api/v1/market/packages')
+  const { data: installedData } = useGatewaySWR<ListData<InstalledItem>>('/api/v1/installed')
 
   const services = servicesData?.items || []
   const sessions = sessionsData?.items || []
   const logs = logsData?.logs || []
-  const marketPackages = marketData?.items || []
+  const installedPackages = installedData?.items || []
   const filteredLogs = logFilter === 'all' ? logs : logs.filter((log) => log.level === logFilter)
   const formValue = {
     name: settingsForm.name ?? workspace?.name ?? '',
@@ -110,31 +115,58 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
   }
 
   async function handleServiceAction(action: 'start' | 'stop' | 'restart' | 'delete', name: string) {
-    if (action === 'start') await gatewayApi.startService(workspaceId, name)
-    if (action === 'stop') await gatewayApi.stopService(workspaceId, name)
-    if (action === 'restart') await gatewayApi.restartService(workspaceId, name)
-    if (action === 'delete') await gatewayApi.deleteService(workspaceId, name)
-    await refreshWorkspace()
+    setServiceActionKey(`${action}:${name}`)
+    await runAction(
+      async () => {
+        if (action === 'start') await gatewayApi.startService(workspaceId, name)
+        if (action === 'stop') await gatewayApi.stopService(workspaceId, name)
+        if (action === 'restart') await gatewayApi.restartService(workspaceId, name)
+        if (action === 'delete') await gatewayApi.deleteService(workspaceId, name)
+        await refreshWorkspace()
+      },
+      { successTitle: '操作成功', errorTitle: '操作失败' }
+    )
+    setServiceActionKey('')
   }
 
   async function handleCreateSession() {
-    await gatewayApi.createSession(workspaceId)
-    await refreshWorkspace()
+    setSessionAction(true)
+    await runAction(
+      async () => {
+        await gatewayApi.createSession(workspaceId)
+        await refreshWorkspace()
+      },
+      { successTitle: '会话已创建', errorTitle: '创建会话失败' }
+    )
+    setSessionAction(false)
   }
 
   async function handleDeleteSession(id: string) {
-    await gatewayApi.deleteSession(workspaceId, id)
-    await refreshWorkspace()
+    setSessionAction(true)
+    await runAction(
+      async () => {
+        await gatewayApi.deleteSession(workspaceId, id)
+        await refreshWorkspace()
+      },
+      { successTitle: '会话已终止', errorTitle: '终止会话失败' }
+    )
+    setSessionAction(false)
   }
 
-  async function handleInstallPackage(pkg: MarketPackage) {
-    await gatewayApi.createService(workspaceId, {
-      name: pkg.id,
-      market_package_id: pkg.id,
-      version: pkg.version,
-    })
-    setIsAddOpen(false)
-    await refreshWorkspace()
+  async function handleAddInstalledPackage(item: InstalledItem) {
+    setAddingInstalledId(item.id)
+    const ok = await runAction(
+      async () => {
+        await gatewayApi.deployInstalledPackage(workspaceId, {
+          installed_id: item.id,
+          service_name: (item.package_name || item.package_id).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || item.package_id,
+        })
+        await refreshWorkspace()
+      },
+      { successTitle: '添加成功', successDescription: 'MCP 已添加到当前工作空间', errorTitle: '添加失败' }
+    )
+    setAddingInstalledId('')
+    if (ok) setIsAddOpen(false)
   }
 
   async function handleCustomDeploy() {
@@ -191,8 +223,15 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
   }
 
   async function handleSaveSettings() {
-    await gatewayApi.updateWorkspace(workspaceId, formValue)
-    await refreshWorkspace()
+    setSavingSettings(true)
+    await runAction(
+      async () => {
+        await gatewayApi.updateWorkspace(workspaceId, formValue)
+        await refreshWorkspace()
+      },
+      { successTitle: '保存成功', successDescription: '工作空间设置已更新', errorTitle: '保存失败' }
+    )
+    setSavingSettings(false)
   }
 
   if (isLoading) {
@@ -371,24 +410,31 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                 <DialogTrigger asChild>
                   <Button>
                     <Plus className="mr-2 h-4 w-4" />
-                    从市场安装
+                    添加已安装 MCP
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>安装 MCP</DialogTitle>
-                    <DialogDescription>从内置市场安装到当前工作空间</DialogDescription>
+                    <DialogTitle>添加已安装 MCP</DialogTitle>
+                    <DialogDescription>从当前账号已安装的 MCP 配置快照添加到此工作空间</DialogDescription>
                   </DialogHeader>
                   <div className="grid max-h-[420px] gap-3 overflow-auto py-4">
-                    {marketPackages.map((pkg) => (
+                    {installedPackages.map((pkg) => (
                       <div key={pkg.id} className="flex items-center justify-between rounded-xl border bg-muted/30 p-4">
                         <div>
-                          <p className="font-medium">{pkg.name}</p>
-                          <p className="text-sm text-muted-foreground">{pkg.description}</p>
+                          <p className="font-medium">{pkg.display_name || pkg.package_name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {pkg.package_id} · v{pkg.installed_version} · {pkg.source_id || 'local'}
+                          </p>
                         </div>
-                        <Button size="sm" onClick={() => handleInstallPackage(pkg)}>安装</Button>
+                        <Button size="sm" onClick={() => handleAddInstalledPackage(pkg)} disabled={addingInstalledId === pkg.id}>
+                          {addingInstalledId === pkg.id ? '添加中...' : '添加'}
+                        </Button>
                       </div>
                     ))}
+                    {installedPackages.length === 0 && (
+                      <p className="text-sm text-muted-foreground">当前账号还没有已安装 MCP，请先到 MCP 市场安装。</p>
+                    )}
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsAddOpen(false)}>关闭</Button>
@@ -436,23 +482,23 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {mcp.status === 'running' ? (
-                          <DropdownMenuItem onSelect={() => handleServiceAction('stop', mcp.name)}>
+                          <DropdownMenuItem onSelect={() => handleServiceAction('stop', mcp.name)} disabled={serviceActionKey === `stop:${mcp.name}`}>
                             <Square className="mr-2 h-4 w-4" />
-                            停止
+                            {serviceActionKey === `stop:${mcp.name}` ? '停止中...' : '停止'}
                           </DropdownMenuItem>
                         ) : (
-                          <DropdownMenuItem onSelect={() => handleServiceAction('start', mcp.name)}>
+                          <DropdownMenuItem onSelect={() => handleServiceAction('start', mcp.name)} disabled={serviceActionKey === `start:${mcp.name}`}>
                             <Play className="mr-2 h-4 w-4" />
-                            启动
+                            {serviceActionKey === `start:${mcp.name}` ? '启动中...' : '启动'}
                           </DropdownMenuItem>
                         )}
-                        <DropdownMenuItem onSelect={() => handleServiceAction('restart', mcp.name)}>
+                        <DropdownMenuItem onSelect={() => handleServiceAction('restart', mcp.name)} disabled={serviceActionKey === `restart:${mcp.name}`}>
                           <RefreshCw className="mr-2 h-4 w-4" />
-                          重启
+                          {serviceActionKey === `restart:${mcp.name}` ? '重启中...' : '重启'}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => handleServiceAction('delete', mcp.name)} className="text-destructive">
+                        <DropdownMenuItem onSelect={() => handleServiceAction('delete', mcp.name)} disabled={serviceActionKey === `delete:${mcp.name}`} className="text-destructive">
                           <Trash2 className="mr-2 h-4 w-4" />
-                          删除
+                          {serviceActionKey === `delete:${mcp.name}` ? '删除中...' : '删除'}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -478,7 +524,7 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
               <h2 className="text-lg font-semibold">会话管理</h2>
               <p className="text-sm text-muted-foreground">查看和管理当前连接的会话</p>
             </div>
-            <Button onClick={handleCreateSession}>新建会话</Button>
+            <Button onClick={handleCreateSession} disabled={sessionAction}>新建会话</Button>
           </div>
           <Card>
             <CardContent className="p-0">
@@ -513,8 +559,8 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                       <TableCell className="text-muted-foreground">{session.bound_mcp_names.join(', ') || '无'}</TableCell>
                       <TableCell className="text-muted-foreground">{formatDateTime(session.last_receive_time)}</TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDeleteSession(session.id)}>
-                          终止
+                        <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDeleteSession(session.id)} disabled={sessionAction}>
+                          {sessionAction ? '处理中...' : '终止'}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -589,7 +635,7 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                 <Label htmlFor="ws-desc">描述</Label>
                 <Textarea id="ws-desc" value={formValue.description} onChange={(e) => setSettingsForm((v) => ({ ...v, description: e.target.value }))} />
               </div>
-              <Button onClick={handleSaveSettings}>保存更改</Button>
+              <Button onClick={handleSaveSettings} disabled={savingSettings}>{savingSettings ? '保存中...' : '保存更改'}</Button>
             </CardContent>
           </Card>
         </TabsContent>

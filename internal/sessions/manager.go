@@ -65,8 +65,15 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 			xl.Warnf("service %s is not running", mcpService.Name)
 			continue
 		}
-		if err := session.SubscribeSSE(xl, mcpService.Name, mcpService.GetSSEUrl()); err != nil {
-			xl.Errorf("failed to subscribe to SSE for service %s: %v", mcpService.Name, err)
+
+		var err error
+		if mcpService.IsSSE() {
+			err = session.SubscribeSSE(xl, mcpService.Name, mcpService.GetSSEUrl())
+		} else {
+			err = session.SubscribeStreamHTTP(xl, mcpService.Name, mcpService.GetMessageUrl())
+		}
+		if err != nil {
+			xl.Errorf("failed to subscribe to service %s: %v", mcpService.Name, err)
 			return nil, fmt.Errorf("failed to subscribe mcpServer[%s]", mcpService.Name)
 		}
 	}

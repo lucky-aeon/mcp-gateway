@@ -30,7 +30,7 @@ type Server struct {
 //   - /admin 静态资源（前端 dashboard）
 //   - /* 单服务代理（必须最后注册）
 //
-// 另外异步触发一次从 mcp_servers.json 恢复 MCP 部署。
+// 非 SaaS 模式下会异步触发一次从 mcp_servers.json 恢复 MCP 部署。
 func New(cfg config.Config, e *echo.Echo) *Server {
 	portMgr := runtime.NewPortManager()
 	services := workspaces.NewServiceMgr(cfg, portMgr)
@@ -63,11 +63,14 @@ func New(cfg config.Config, e *echo.Echo) *Server {
 	// 通配路由 /* 必须最后注册（echo 的路由优先级要求）
 	gatewayH.RegisterProxy(e)
 
-	// 异步恢复 mcp_servers.json 中已部署的 MCP
-	_ = persistence.LoadAndDeployServers(cfg, func(name string, mcpCfg config.MCPServerConfig) error {
-		_, err := adminH.DeployServer(name, mcpCfg)
-		return err
-	})
+	// SaaS 模式的账号、工作区、已安装 MCP 都以 Mongo 为准。
+	// mcp_servers.json 是旧版全局持久化文件，不能在 SaaS 下自动回放到 default workspace。
+	if !authSvc.IsSaaS() {
+		_ = persistence.LoadAndDeployServers(cfg, func(name string, mcpCfg config.MCPServerConfig) error {
+			_, err := adminH.DeployServer(name, mcpCfg)
+			return err
+		})
+	}
 
 	return &Server{services: services, auth: authSvc}
 }

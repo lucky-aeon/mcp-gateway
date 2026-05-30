@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { Bell, Search, User, ChevronRight, LogOut, Settings, UserCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -98,9 +99,10 @@ export function Header() {
   const pathname = usePathname()
   const router = useRouter()
   const { data: me } = useGatewaySWR<MeInfo>('/api/v1/auth/me')
+  const [notificationItems, setNotificationItems] = useState(notifications)
 
   const breadcrumbs = getBreadcrumbs(pathname)
-  const unreadCount = notifications.filter((n) => !n.read).length
+  const unreadCount = notificationItems.filter((n) => !n.read).length
 
   const handleLogout = () => {
     clearGatewayAuth()
@@ -167,15 +169,22 @@ export function Header() {
                   </Badge>
                 )}
               </div>
-              <Button variant="ghost" size="sm" className="h-8 text-xs">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={unreadCount === 0}
+                onClick={() => setNotificationItems((items) => items.map((item) => ({ ...item, read: true })))}
+              >
                 全部已读
               </Button>
             </div>
             <ScrollArea className="h-[360px]">
               <div className="divide-y divide-border">
-                {notifications.map((notification) => (
+                {notificationItems.map((notification) => (
                   <div
                     key={notification.id}
+                    onClick={() => setNotificationItems((items) => items.map((item) => item.id === notification.id ? { ...item, read: true } : item))}
                     className={cn(
                       'flex gap-3 px-4 py-3 transition-colors hover:bg-muted/50 cursor-pointer',
                       !notification.read && 'bg-primary/5'

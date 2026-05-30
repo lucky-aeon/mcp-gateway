@@ -19,6 +19,7 @@ type MongoStore struct {
 	auditLogs     *qmgo.Collection
 	workspaces    *qmgo.Collection
 	mcpServers    *qmgo.Collection
+	installedPkgs *qmgo.Collection
 }
 
 func OpenMongoStore(ctx context.Context, uri, dbName string) (*MongoStore, error) {
@@ -37,6 +38,7 @@ func OpenMongoStore(ctx context.Context, uri, dbName string) (*MongoStore, error
 		auditLogs:     db.Collection("audit_logs"),
 		workspaces:    db.Collection("workspaces"),
 		mcpServers:    db.Collection("mcp_servers"),
+		installedPkgs: db.Collection("installed_packages"),
 	}, nil
 }
 
@@ -181,7 +183,20 @@ func (s *MongoStore) DeleteWorkspace(ctx context.Context, id string) error {
 }
 
 func (s *MongoStore) CreateMCPServer(ctx context.Context, server *MCPServer) error {
-	_, err := s.mcpServers.InsertOne(ctx, server)
+	server.UpdatedAt = time.Now().UTC()
+	existing, err := s.GetMCPServer(ctx, server.WorkspaceID, server.Name)
+	if err == nil {
+		server.ID = existing.ID
+		server.CreatedAt = existing.CreatedAt
+	}
+	if server.ID == "" {
+		server.ID = newID()
+	}
+	if server.CreatedAt.IsZero() {
+		server.CreatedAt = server.UpdatedAt
+	}
+	_, _ = s.mcpServers.RemoveAll(ctx, bson.M{"workspace_id": server.WorkspaceID, "name": server.Name})
+	_, err = s.mcpServers.InsertOne(ctx, server)
 	return err
 }
 
@@ -201,8 +216,65 @@ func (s *MongoStore) ListMCPServers(ctx context.Context, workspaceID string) ([]
 }
 
 func (s *MongoStore) DeleteMCPServer(ctx context.Context, workspaceID, name string) error {
-	err := s.mcpServers.Remove(ctx, bson.M{"workspace_id": workspaceID, "name": name})
+	_, err := s.mcpServers.RemoveAll(ctx, bson.M{"workspace_id": workspaceID, "name": name})
 	return err
+}
+
+func (s *MongoStore) UpsertInstalledPackage(ctx context.Context, item *InstalledPackage) error {
+	item.UpdatedAt = time.Now().UTC()
+	existing, err := s.findInstalledPackageByPackageID(ctx, item.AccountID, item.PackageID)
+	if err == nil {
+		item.ID = existing.ID
+		item.CreatedAt = existing.CreatedAt
+		return s.installedPkgs.UpdateOne(ctx, bson.M{"id": existing.ID, "account_id": item.AccountID}, bson.M{
+			"$set": bson.M{
+				"package_name":         item.PackageName,
+				"display_name":         item.DisplayName,
+				"version":              item.Version,
+				"source_id":            item.SourceID,
+				"install_option_index": item.InstallOptionIndex,
+				"config_snapshot":      item.ConfigSnapshot,
+				"package_snapshot":     item.PackageSnapshot,
+				"updated_at":           item.UpdatedAt,
+			},
+		})
+	}
+	if item.ID == "" {
+		item.ID = newID()
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = item.UpdatedAt
+	}
+	_, err = s.installedPkgs.InsertOne(ctx, item)
+	return err
+}
+
+func (s *MongoStore) findInstalledPackageByPackageID(ctx context.Context, accountID, packageID string) (*InstalledPackage, error) {
+	item := &InstalledPackage{}
+	err := s.installedPkgs.Find(ctx, bson.M{"account_id": accountID, "package_id": packageID}).One(item)
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *MongoStore) GetInstalledPackage(ctx context.Context, accountID, id string) (*InstalledPackage, error) {
+	item := &InstalledPackage{}
+	err := s.installedPkgs.Find(ctx, bson.M{"account_id": accountID, "id": id}).One(item)
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *MongoStore) ListInstalledPackages(ctx context.Context, accountID string) ([]InstalledPackage, error) {
+	var items []InstalledPackage
+	err := s.installedPkgs.Find(ctx, bson.M{"account_id": accountID}).Sort("-updated_at").All(&items)
+	return items, err
+}
+
+func (s *MongoStore) DeleteInstalledPackage(ctx context.Context, accountID, id string) error {
+	return s.installedPkgs.Remove(ctx, bson.M{"account_id": accountID, "id": id})
 }
 
 func (s *MongoStore) CreateAPIKey(ctx context.Context, key *APIKey) error {

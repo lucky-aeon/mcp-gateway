@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	client "github.com/mark3labs/mcp-go/client"
@@ -43,6 +44,7 @@ func NewStdioToSSEBridge(ctx context.Context, transport *transport.Stdio, mcpNam
 	initResult, err := stdioClient.Initialize(ctx, initRequest)
 	if err != nil {
 		logger.Error("Failed to initialize stdio client", "error", err)
+		_ = stdioClient.Close()
 		return nil, fmt.Errorf("failed to initialize stdio client: %w", err)
 	}
 
@@ -205,7 +207,9 @@ func (b *StdioToSSEBridge) setupResourceBridge(ctx context.Context) error {
 func (b *StdioToSSEBridge) Start(addr string) error {
 	b.logger.Info("Starting SSE bridge server", "address", addr)
 
-	if err := b.Ping(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := b.Ping(ctx); err != nil {
 		b.logger.Error("Failed to ping stdio server", "error", err)
 		return fmt.Errorf("failed to ping stdio server: %w", err)
 	}

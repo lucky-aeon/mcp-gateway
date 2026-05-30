@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/sessions"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
 	"github.com/mark3labs/mcp-go/mcp"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type envelope struct {
@@ -68,6 +70,7 @@ func (h *Handler) registerV1Routes(e *echo.Echo) {
 	v1.GET("/workspaces/:ws/services", h.handleV1ListServices)
 	v1.POST("/workspaces/:ws/services", h.handleV1CreateService)
 	v1.POST("/workspaces/:ws/services:batch", h.handleV1BatchCreateServices)
+	v1.POST("/workspaces/:ws/services:from-installed", h.handleV1CreateServiceFromInstalled)
 	v1.PUT("/workspaces/:ws/services/:name", h.handleV1UpdateService)
 	v1.DELETE("/workspaces/:ws/services/:name", h.handleV1DeleteService)
 	v1.POST("/workspaces/:ws/services/:name/start", h.handleV1StartService)
@@ -82,6 +85,7 @@ func (h *Handler) registerV1Routes(e *echo.Echo) {
 	v1.GET("/sessions/:id", h.handleV1GetSession)
 
 	v1.GET("/installed", h.handleV1Installed)
+	v1.DELETE("/installed/:id", h.handleV1DeleteInstalled)
 	v1.GET("/api-keys", h.handleV1ListAPIKeys)
 	v1.POST("/api-keys", h.handleV1CreateAPIKey)
 	v1.POST("/api-keys/:id/revoke", h.handleV1RevokeAPIKey)
@@ -89,8 +93,13 @@ func (h *Handler) registerV1Routes(e *echo.Echo) {
 	v1.POST("/workspaces/:ws/members", h.handleV1AddWorkspaceMember)
 	v1.GET("/audit-logs", h.handleV1ListAuditLogs)
 	v1.GET("/market/sources", h.handleV1MarketSources)
+	v1.POST("/market/sources/:id/sync", h.handleV1SyncMarketSource)
 	v1.GET("/market/packages", h.handleV1MarketPackages)
+	v1.POST("/market/packages", h.handleV1CreateMarketPackage)
 	v1.GET("/market/packages/:id", h.handleV1MarketPackageDetail)
+	v1.PATCH("/market/packages/:id", h.handleV1UpdateMarketPackage)
+	v1.DELETE("/market/packages/:id", h.handleV1DeleteMarketPackage)
+	v1.POST("/market/packages/:id/install", h.handleV1InstallMarketPackage)
 	v1.GET("/system/config", h.handleV1SystemConfig)
 	v1.PUT("/system/config", h.handleV1UpdateSystemConfig)
 	v1.GET("/system/api-key", h.handleV1GetSystemAPIKey)
@@ -371,6 +380,13 @@ func (h *Handler) handleV1AuthRegister(c echo.Context) error {
 			Role:      identity.RoleWorkspaceOwner,
 		}
 		_ = h.auth.AddWorkspaceOwner(c.Request().Context(), meta.ID, principal)
+		_ = h.auth.CreateWorkspace(c.Request().Context(), &identity.Workspace{
+			ID:          meta.ID,
+			Name:        meta.Name,
+			Description: meta.Description,
+			CreatedAt:   meta.CreatedAt,
+			UpdatedAt:   meta.LastActivityAt,
+		})
 	}
 
 	h.auth.AppendAuditLog(c.Request().Context(), nil, "auth.register", "account", strings.ToLower(strings.TrimSpace(req.Email)), "", map[string]interface{}{"mode": "saas"})
@@ -815,7 +831,7 @@ func (h *Handler) handleV1CreateService(c echo.Context) error {
 		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	}
 
-	name, cfg, meta, err := parseServiceRequest(wsID, raw)
+	name, cfg, meta, err := h.parseServiceRequest(wsID, raw)
 	if err != nil {
 		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
 	}
@@ -859,6 +875,79 @@ func (h *Handler) handleV1CreateService(c echo.Context) error {
 	return respondCreated(c, view)
 }
 
+func (h *Handler) handleV1CreateServiceFromInstalled(c echo.Context) error {
+	wsID := c.Param("ws")
+	if err := h.requireWorkspaceRole(c, wsID, identity.RoleWorkspaceAdmin); err != nil {
+		return err
+	}
+	var req struct {
+		InstalledID string            `json:"installed_id"`
+		ServiceName string            `json:"service_name"`
+		Env         map[string]string `json:"env"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	if strings.TrimSpace(req.InstalledID) == "" {
+		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "installed_id is required", nil)
+	}
+	installed, err := h.getAccountInstalledPackage(c.Request().Context(), h.currentPrincipal(c).AccountID, req.InstalledID)
+	if err != nil {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "installed package not found", nil)
+	}
+	serviceName := strings.TrimSpace(req.ServiceName)
+	if serviceName == "" {
+		serviceName = slugify(valueOrDefault(installed.PackageName, installed.DisplayName))
+	}
+	if serviceName == "" {
+		serviceName = installed.PackageID
+	}
+	cfg := serviceConfigFromMap(installed.ConfigSnapshot, wsID)
+	for k, v := range req.Env {
+		cfg.Env[k] = v
+	}
+	result, err := h.DeployServer(serviceName, cfg)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "MCP_DEPLOY_FAILED", err.Error(), nil)
+	}
+	meta := serviceMeta{
+		Name:          serviceName,
+		WorkspaceID:   wsID,
+		SourceType:    "installed",
+		SourceRef:     installed.ID,
+		Version:       installed.Version,
+		CreatedAt:     time.Now().UTC(),
+		InstalledFrom: "account",
+	}
+	h.state.ensureWorkspace(wsID)
+	h.state.upsertService(wsID, meta)
+	if h.auth != nil {
+		_ = h.auth.CreateMCPServer(c.Request().Context(), &identity.MCPServer{
+			ID:          uuid.NewString(),
+			Name:        serviceName,
+			WorkspaceID: wsID,
+			SourceType:  meta.SourceType,
+			SourceRef:   meta.SourceRef,
+			Version:     meta.Version,
+			Config:      serviceConfigToMap(cfg),
+			CreatedAt:   meta.CreatedAt,
+			UpdatedAt:   time.Now().UTC(),
+		})
+	}
+	h.state.appendActivity(activityItem{
+		Type:          "mcp.deployed",
+		WorkspaceID:   wsID,
+		WorkspaceName: h.workspaceName(wsID),
+		ServiceName:   serviceName,
+		Message:       fmt.Sprintf("added %s from installed package: %s", serviceName, result),
+	})
+	h.appendAudit(c, "service.create_from_installed", "service", serviceName, wsID, map[string]interface{}{
+		"installed_id": installed.ID,
+		"package_id":   installed.PackageID,
+	})
+	return respondCreated(c, h.findServiceView(wsID, serviceName))
+}
+
 func (h *Handler) handleV1BatchCreateServices(c echo.Context) error {
 	wsID := c.Param("ws")
 	if err := h.requireWorkspaceRole(c, wsID, identity.RoleWorkspaceAdmin); err != nil {
@@ -880,7 +969,7 @@ func (h *Handler) handleV1BatchCreateServices(c echo.Context) error {
 	results := make(map[string]map[string]string, len(req.MCPServers))
 	for name, body := range req.MCPServers {
 		body["name"] = name
-		_, cfg, meta, err := parseServiceRequest(wsID, body)
+		_, cfg, meta, err := h.parseServiceRequest(wsID, body)
 		if err != nil {
 			results[name] = map[string]string{"status": "failed", "message": err.Error()}
 			summary["failed"]++
@@ -915,7 +1004,7 @@ func (h *Handler) handleV1UpdateService(c echo.Context) error {
 		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	}
 	raw["name"] = name
-	_, cfg, meta, err := parseServiceRequest(wsID, raw)
+	_, cfg, meta, err := h.parseServiceRequest(wsID, raw)
 	if err != nil {
 		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
 	}
@@ -939,12 +1028,16 @@ func (h *Handler) handleV1DeleteService(c echo.Context) error {
 		return err
 	}
 	if err := h.services.DeleteServer(nilLogger{}, workspaces.NameArg{Workspace: wsID, Server: name}); err != nil {
-		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		if !isServiceNotFoundError(err) {
+			return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		}
 	}
 	h.state.deleteService(wsID, name)
 	// 从数据库删除
 	if h.auth != nil {
-		_ = h.auth.DeleteMCPServer(c.Request().Context(), wsID, name)
+		if err := h.auth.DeleteMCPServer(c.Request().Context(), wsID, name); err != nil && !isServiceNotFoundError(err) {
+			return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		}
 	}
 	h.appendAudit(c, "service.delete", "service", name, wsID, nil)
 	return respondOK(c, map[string]string{"name": name})
@@ -1195,111 +1288,424 @@ func (h *Handler) handleV1GetSession(c echo.Context) error {
 }
 
 func (h *Handler) handleV1Installed(c echo.Context) error {
-	h.seedStateFromRuntime()
-	visible, err := h.visibleWorkspaceMap(c)
+	principal := h.currentPrincipal(c)
+	installed, err := h.listAccountInstalledPackages(c.Request().Context(), principal.AccountID)
 	if err != nil {
-		return respondError(c, http.StatusForbidden, "FORBIDDEN", "failed to resolve workspace visibility", nil)
+		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 	}
-	items := make([]map[string]interface{}, 0)
-	for wsID := range h.getWorkspaceMap() {
-		if visible != nil && !visible[wsID] {
-			continue
+	items := make([]map[string]interface{}, 0, len(installed))
+	for _, item := range installed {
+		latestVersion := item.Version
+		if pkg, ok := h.market.getPackage(item.PackageID); ok && pkg.Version != "" {
+			latestVersion = pkg.Version
 		}
-		for _, svc := range h.buildServiceViews(wsID) {
-			meta, _ := h.state.getService(wsID, svc.Name)
-			if meta == nil {
-				continue
-			}
-			items = append(items, map[string]interface{}{
-				"package_id":        valueOrDefault(meta.SourceRef, svc.Name),
-				"package_name":      strings.Title(strings.ReplaceAll(valueOrDefault(meta.SourceRef, svc.Name), "-", " ")),
-				"installed_version": valueOrDefault(meta.Version, "unknown"),
-				"latest_version":    valueOrDefault(meta.Version, "unknown"),
-				"workspace_id":      wsID,
-				"workspace_name":    h.workspaceName(wsID),
-				"service_name":      svc.Name,
-				"status":            svc.Status,
-				"installed_at":      meta.CreatedAt.UTC().Format(time.RFC3339),
-			})
-		}
+		items = append(items, installedPackageView(item, valueOrDefault(latestVersion, item.Version)))
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i]["installed_at"].(string) > items[j]["installed_at"].(string)
+		return items[i]["updated_at"].(string) > items[j]["updated_at"].(string)
 	})
 	return respondOK(c, listData{Items: items, Total: len(items), Page: 1, PageSize: len(items)})
 }
 
+func (h *Handler) handleV1DeleteInstalled(c echo.Context) error {
+	principal := h.currentPrincipal(c)
+	if err := h.deleteAccountInstalledPackage(c.Request().Context(), principal.AccountID, c.Param("id")); err != nil {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "installed package not found", nil)
+	}
+	h.appendAudit(c, "installed.delete", "installed_package", c.Param("id"), "", nil)
+	return respondOK(c, map[string]string{"id": c.Param("id")})
+}
+
 func (h *Handler) handleV1MarketSources(c echo.Context) error {
+	items := h.market.listSources()
 	return respondOK(c, listData{
-		Items:    defaultMarketSources,
-		Total:    len(defaultMarketSources),
+		Items:    items,
+		Total:    len(items),
 		Page:     1,
-		PageSize: len(defaultMarketSources),
+		PageSize: len(items),
 	})
+}
+
+func (h *Handler) handleV1SyncMarketSource(c echo.Context) error {
+	sourceID := c.Param("id")
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 45*time.Second)
+	defer cancel()
+	job, err := h.market.syncSource(ctx, sourceID)
+	if err != nil && job == nil {
+		return respondError(c, http.StatusUnprocessableEntity, "MARKET_SOURCE_UNREACHABLE", err.Error(), nil)
+	}
+	if err != nil {
+		return respondError(c, http.StatusBadGateway, "MARKET_SOURCE_UNREACHABLE", err.Error(), job)
+	}
+	return respondOK(c, job)
 }
 
 func (h *Handler) handleV1MarketPackages(c echo.Context) error {
 	page, pageSize := parsePageParams(c)
-	q := strings.ToLower(strings.TrimSpace(c.QueryParam("q")))
+	q := strings.TrimSpace(c.QueryParam("q"))
 	category := strings.TrimSpace(c.QueryParam("category"))
 	sourceFilter := strings.TrimSpace(c.QueryParam("source"))
-	items := make([]map[string]interface{}, 0, len(defaultMarketPackages))
-	for _, pkg := range defaultMarketPackages {
-		if q != "" && !strings.Contains(strings.ToLower(pkg.Name+" "+pkg.Description+" "+pkg.ID), q) {
-			continue
-		}
-		if category != "" && category != "全部" && pkg.Category != category {
-			continue
-		}
-		if sourceFilter != "" && pkg.SourceID != sourceFilter {
-			continue
-		}
-		items = append(items, map[string]interface{}{
-			"id":          pkg.ID,
-			"name":        pkg.Name,
-			"version":     pkg.Version,
-			"description": pkg.Description,
-			"author":      pkg.Author,
-			"tags":        pkg.Tags,
-			"rating":      pkg.Rating,
-			"downloads":   pkg.Downloads,
-			"verified":    pkg.Verified,
-			"source_id":   pkg.SourceID,
-			"category":    pkg.Category,
-			"tools":       pkg.Tools,
-		})
-	}
+	installability := strings.TrimSpace(c.QueryParam("installability"))
+	verifiedOnly := c.QueryParam("verified_only") == "true"
+	items := h.market.listPackages(q, sourceFilter, category, installability, verifiedOnly)
 	paged, total := paginate(items, page, pageSize)
 	return respondOK(c, listData{Items: paged, Total: total, Page: page, PageSize: pageSize})
 }
 
 func (h *Handler) handleV1MarketPackageDetail(c echo.Context) error {
-	pkg, ok := getMarketPackage(c.Param("id"))
+	pkg, ok := h.market.getPackage(c.Param("id"))
 	if !ok {
 		return respondError(c, http.StatusNotFound, "NOT_FOUND", "package not found", nil)
 	}
-	return respondOK(c, map[string]interface{}{
-		"id":          pkg.ID,
-		"name":        pkg.Name,
-		"version":     pkg.Version,
-		"description": pkg.Description,
-		"author":      pkg.Author,
-		"tags":        pkg.Tags,
-		"rating":      pkg.Rating,
-		"downloads":   pkg.Downloads,
-		"verified":    pkg.Verified,
-		"source_id":   pkg.SourceID,
-		"category":    pkg.Category,
-		"install": map[string]interface{}{
-			"type":    pkg.Install.Type,
-			"command": pkg.Install.Command,
-			"args":    pkg.Install.Args,
-			"env":     pkg.Install.Env,
-		},
-		"tools":    pkg.Tools,
-		"readme":   pkg.Readme,
-		"versions": pkg.Versions,
+	return respondOK(c, marketPackageDetailResponse(*pkg))
+}
+
+func (h *Handler) handleV1CreateMarketPackage(c echo.Context) error {
+	if !h.currentPrincipal(c).IsSystemAdmin {
+		return respondError(c, http.StatusForbidden, "FORBIDDEN", "market management requires system admin", nil)
+	}
+	var req marketPackageRequest
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	pkg, err := marketPackageFromRequest(req)
+	if err != nil {
+		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	created := h.market.createLocalPackage(pkg)
+	return respondCreated(c, marketPackageDetailResponse(created))
+}
+
+func (h *Handler) handleV1UpdateMarketPackage(c echo.Context) error {
+	if !h.currentPrincipal(c).IsSystemAdmin {
+		return respondError(c, http.StatusForbidden, "FORBIDDEN", "market management requires system admin", nil)
+	}
+	var req marketPackageRequest
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	pkg, err := marketPackageFromRequest(req)
+	if err != nil {
+		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	updated, ok := h.market.updateLocalPackage(c.Param("id"), pkg)
+	if !ok {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "local market package not found", nil)
+	}
+	return respondOK(c, marketPackageDetailResponse(updated))
+}
+
+func (h *Handler) handleV1DeleteMarketPackage(c echo.Context) error {
+	if !h.currentPrincipal(c).IsSystemAdmin {
+		return respondError(c, http.StatusForbidden, "FORBIDDEN", "market management requires system admin", nil)
+	}
+	if !h.market.deleteLocalPackage(c.Param("id")) {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "local market package not found", nil)
+	}
+	return respondOK(c, map[string]string{"id": c.Param("id")})
+}
+
+func (h *Handler) handleV1InstallMarketPackage(c echo.Context) error {
+	var req struct {
+		DisplayName        string            `json:"display_name"`
+		InstallOptionIndex int               `json:"install_option_index"`
+		Env                map[string]string `json:"env"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	pkg, ok := h.market.getPackage(c.Param("id"))
+	if !ok {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "package not found", nil)
+	}
+	cfg, err := marketPackageToServiceConfig(*pkg, req.InstallOptionIndex, "", req.Env)
+	if err != nil {
+		return respondError(c, http.StatusUnprocessableEntity, "PACKAGE_INSTALL_FAILED", err.Error(), nil)
+	}
+	cfg.GatewayProtocol = h.cfg.GatewayProtocol
+	version := pkg.Version
+	if version == "" && req.InstallOptionIndex >= 0 && req.InstallOptionIndex < len(pkg.InstallOptions) {
+		version = pkg.InstallOptions[req.InstallOptionIndex].PackageName
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = valueOrDefault(pkg.Title, pkg.Name)
+	}
+	sourceID := sourceIDFromPackage(*pkg)
+	installed := identity.InstalledPackage{
+		ID:                 uuid.NewString(),
+		AccountID:          h.currentPrincipal(c).AccountID,
+		PackageID:          pkg.ID,
+		PackageName:        valueOrDefault(pkg.Name, pkg.Title),
+		DisplayName:        displayName,
+		Version:            version,
+		SourceID:           sourceID,
+		InstallOptionIndex: req.InstallOptionIndex,
+		ConfigSnapshot:     serviceConfigToMap(cfg),
+		PackageSnapshot:    marketPackageSnapshot(*pkg),
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
+	}
+	installed, err = h.upsertAccountInstalledPackage(c.Request().Context(), installed)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	}
+	h.state.appendActivity(activityItem{
+		Type:    "market.installed",
+		Message: fmt.Sprintf("installed %s to account", installed.PackageName),
 	})
+	h.appendAudit(c, "market.install", "installed_package", installed.ID, "", map[string]interface{}{
+		"package_id": pkg.ID,
+	})
+	return respondCreated(c, installedPackageView(installed, version))
+}
+
+type marketPackageRequest struct {
+	Name           string                `json:"name"`
+	Title          string                `json:"title"`
+	Description    string                `json:"description"`
+	Author         string                `json:"author"`
+	Version        string                `json:"version"`
+	Tags           []string              `json:"tags"`
+	Category       string                `json:"category"`
+	Repository     string                `json:"repository"`
+	Homepage       string                `json:"homepage"`
+	License        string                `json:"license"`
+	Verified       bool                  `json:"verified"`
+	InstallOptions []MarketInstallOption `json:"install_options"`
+	Tools          []MarketToolSpec      `json:"tools"`
+}
+
+func marketPackageFromRequest(req marketPackageRequest) (MarketPackage, error) {
+	name := strings.TrimSpace(req.Name)
+	title := strings.TrimSpace(req.Title)
+	if name == "" && title == "" {
+		return MarketPackage{}, fmt.Errorf("name or title is required")
+	}
+	if name == "" {
+		name = slugify(title)
+	}
+	if title == "" {
+		title = name
+	}
+	if strings.TrimSpace(req.Description) == "" {
+		return MarketPackage{}, fmt.Errorf("description is required")
+	}
+	options := append([]MarketInstallOption(nil), req.InstallOptions...)
+	for i := range options {
+		options[i].Type = normalizeInstallType(options[i].Type)
+		options[i].SourceID = localMarketSourceID
+		if options[i].Confidence == "" {
+			options[i].Confidence = "high"
+		}
+		if options[i].Env == nil {
+			options[i].Env = map[string]string{}
+		}
+	}
+	return MarketPackage{
+		CanonicalName:  localMarketSourceID + "/" + name,
+		Name:           name,
+		Title:          title,
+		Description:    strings.TrimSpace(req.Description),
+		Author:         strings.TrimSpace(req.Author),
+		Version:        strings.TrimSpace(req.Version),
+		Tags:           req.Tags,
+		Category:       strings.TrimSpace(req.Category),
+		Repository:     strings.TrimSpace(req.Repository),
+		Homepage:       strings.TrimSpace(req.Homepage),
+		License:        strings.TrimSpace(req.License),
+		Verified:       req.Verified,
+		InstallOptions: options,
+		Tools:          req.Tools,
+	}, nil
+}
+
+func marketPackageDetailResponse(pkg MarketPackage) map[string]interface{} {
+	readme, _ := pkg.RawMeta["readme"].(string)
+	versions, _ := pkg.RawMeta["versions"].([]string)
+	sourceID := ""
+	if len(pkg.SourceRefs) > 0 {
+		sourceID = pkg.SourceRefs[0].SourceID
+	}
+	install := map[string]interface{}{}
+	if len(pkg.InstallOptions) > 0 {
+		opt := pkg.InstallOptions[0]
+		install = map[string]interface{}{
+			"type":    opt.Type,
+			"command": opt.Command,
+			"args":    opt.Args,
+			"env":     opt.Env,
+			"url":     opt.URL,
+		}
+	}
+	return map[string]interface{}{
+		"id":              pkg.ID,
+		"canonical_name":  pkg.CanonicalName,
+		"name":            valueOrDefault(pkg.Title, pkg.Name),
+		"title":           pkg.Title,
+		"version":         pkg.Version,
+		"description":     pkg.Description,
+		"author":          pkg.Author,
+		"tags":            pkg.Tags,
+		"rating":          pkg.Rating,
+		"downloads":       pkg.Downloads,
+		"use_count":       pkg.UseCount,
+		"verified":        pkg.Verified,
+		"source_id":       sourceID,
+		"category":        pkg.Category,
+		"repository":      pkg.Repository,
+		"homepage":        pkg.Homepage,
+		"license":         pkg.License,
+		"installability":  pkg.Installability,
+		"install_options": pkg.InstallOptions,
+		"install":         install,
+		"tools":           pkg.Tools,
+		"env_schema":      pkg.EnvSchema,
+		"source_refs":     pkg.SourceRefs,
+		"readme":          readme,
+		"versions":        versions,
+		"raw_meta":        pkg.RawMeta,
+	}
+}
+
+func installedPackageView(item identity.InstalledPackage, latestVersion string) map[string]interface{} {
+	return map[string]interface{}{
+		"id":                   item.ID,
+		"account_id":           item.AccountID,
+		"package_id":           item.PackageID,
+		"package_name":         item.PackageName,
+		"display_name":         valueOrDefault(item.DisplayName, item.PackageName),
+		"installed_version":    valueOrDefault(item.Version, "unknown"),
+		"latest_version":       valueOrDefault(latestVersion, valueOrDefault(item.Version, "unknown")),
+		"source_id":            item.SourceID,
+		"install_option_index": item.InstallOptionIndex,
+		"config_snapshot":      item.ConfigSnapshot,
+		"package_snapshot":     item.PackageSnapshot,
+		"status":               "installed",
+		"installed_at":         item.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":           item.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func (h *Handler) upsertAccountInstalledPackage(ctx context.Context, item identity.InstalledPackage) (identity.InstalledPackage, error) {
+	if item.AccountID == "" {
+		item.AccountID = "admin"
+	}
+	if h.auth != nil && h.auth.IsSaaS() {
+		if err := h.auth.UpsertInstalledPackage(ctx, &item); err != nil {
+			return item, err
+		}
+		return item, nil
+	}
+	return h.state.upsertInstalledPackage(item.AccountID, item), nil
+}
+
+func (h *Handler) getAccountInstalledPackage(ctx context.Context, accountID, id string) (*identity.InstalledPackage, error) {
+	if accountID == "" {
+		accountID = "admin"
+	}
+	if h.auth != nil && h.auth.IsSaaS() {
+		item, err := h.auth.GetInstalledPackage(ctx, accountID, id)
+		if err != nil || item == nil {
+			return nil, fmt.Errorf("installed package not found")
+		}
+		return item, nil
+	}
+	if item, ok := h.state.getInstalledPackage(accountID, id); ok {
+		return item, nil
+	}
+	return nil, fmt.Errorf("installed package not found")
+}
+
+func (h *Handler) listAccountInstalledPackages(ctx context.Context, accountID string) ([]identity.InstalledPackage, error) {
+	if accountID == "" {
+		accountID = "admin"
+	}
+	if h.auth != nil && h.auth.IsSaaS() {
+		return h.auth.ListInstalledPackages(ctx, accountID)
+	}
+	return h.state.listInstalledPackages(accountID), nil
+}
+
+func (h *Handler) deleteAccountInstalledPackage(ctx context.Context, accountID, id string) error {
+	if accountID == "" {
+		accountID = "admin"
+	}
+	if h.auth != nil && h.auth.IsSaaS() {
+		return h.auth.DeleteInstalledPackage(ctx, accountID, id)
+	}
+	if h.state.deleteInstalledPackage(accountID, id) {
+		return nil
+	}
+	return fmt.Errorf("installed package not found")
+}
+
+func serviceConfigToMap(cfg config.MCPServerConfig) map[string]interface{} {
+	return map[string]interface{}{
+		"url":              cfg.URL,
+		"command":          cfg.Command,
+		"args":             append([]string(nil), cfg.Args...),
+		"env":              copyStringMap(cfg.Env),
+		"gateway_protocol": cfg.GatewayProtocol,
+	}
+}
+
+func serviceConfigFromMap(raw map[string]interface{}, workspaceID string) config.MCPServerConfig {
+	cfg := config.MCPServerConfig{
+		Workspace: workspaceID,
+		Args:      []string{},
+		Env:       map[string]string{},
+	}
+	if raw == nil {
+		return cfg
+	}
+	cfg.URL = asString(raw["url"])
+	cfg.Command = asString(raw["command"])
+	cfg.Args = asStringSlice(raw["args"])
+	cfg.Env = asStringMap(raw["env"])
+	cfg.GatewayProtocol = asString(raw["gateway_protocol"])
+	if cfg.Env == nil {
+		cfg.Env = map[string]string{}
+	}
+	return cfg
+}
+
+func marketPackageSnapshot(pkg MarketPackage) map[string]interface{} {
+	return map[string]interface{}{
+		"id":             pkg.ID,
+		"canonical_name": pkg.CanonicalName,
+		"name":           pkg.Name,
+		"title":          pkg.Title,
+		"description":    pkg.Description,
+		"author":         pkg.Author,
+		"version":        pkg.Version,
+		"source_id":      sourceIDFromPackage(pkg),
+		"category":       pkg.Category,
+		"repository":     pkg.Repository,
+		"homepage":       pkg.Homepage,
+		"license":        pkg.License,
+		"verified":       pkg.Verified,
+		"tags":           append([]string(nil), pkg.Tags...),
+		"tools":          pkg.Tools,
+	}
+}
+
+func sourceIDFromPackage(pkg MarketPackage) string {
+	if len(pkg.SourceRefs) > 0 {
+		return pkg.SourceRefs[0].SourceID
+	}
+	if pkg.hasSource(localMarketSourceID) {
+		return localMarketSourceID
+	}
+	return ""
+}
+
+func isServiceNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "not exist")
 }
 
 func (h *Handler) handleV1WorkspaceLogs(c echo.Context) error {
@@ -1541,7 +1947,7 @@ func (h *Handler) handleV1ListAuditLogs(c echo.Context) error {
 	return respondOK(c, listData{Items: out, Total: len(out), Page: 1, PageSize: len(out)})
 }
 
-func parseServiceRequest(workspaceID string, raw map[string]interface{}) (string, config.MCPServerConfig, serviceMeta, error) {
+func (h *Handler) parseServiceRequest(workspaceID string, raw map[string]interface{}) (string, config.MCPServerConfig, serviceMeta, error) {
 	name := strings.TrimSpace(asString(raw["name"]))
 	if name == "" {
 		return "", config.MCPServerConfig{}, serviceMeta{}, fmt.Errorf("service name is required")
@@ -1554,14 +1960,18 @@ func parseServiceRequest(workspaceID string, raw map[string]interface{}) (string
 	meta := serviceMeta{Name: name, WorkspaceID: workspaceID, CreatedAt: time.Now().UTC()}
 
 	if pkgID := asString(raw["market_package_id"]); pkgID != "" {
-		pkg, ok := getMarketPackage(pkgID)
+		pkg, ok := h.market.getPackage(pkgID)
 		if !ok {
 			return "", config.MCPServerConfig{}, serviceMeta{}, fmt.Errorf("market package not found")
 		}
 		meta.SourceType = "market"
 		meta.SourceRef = pkgID
 		meta.Version = asString(raw["version"])
-		cfg = packageConfigFromMarket(*pkg, workspaceID, asStringMap(raw["env"]))
+		optionIndex, _ := strconv.Atoi(asString(raw["install_option_index"]))
+		cfg, err := marketPackageToServiceConfig(*pkg, optionIndex, workspaceID, asStringMap(raw["env"]))
+		if err != nil {
+			return "", config.MCPServerConfig{}, serviceMeta{}, err
+		}
 		if meta.Version == "" {
 			meta.Version = pkg.Version
 		}
@@ -1610,6 +2020,12 @@ func asStringSlice(v interface{}) []string {
 			out = append(out, asString(item))
 		}
 		return out
+	case primitive.A:
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			out = append(out, asString(item))
+		}
+		return out
 	default:
 		return nil
 	}
@@ -1623,6 +2039,12 @@ func asStringMap(v interface{}) map[string]string {
 	case map[string]string:
 		return m
 	case map[string]interface{}:
+		out := make(map[string]string, len(m))
+		for k, val := range m {
+			out[k] = asString(val)
+		}
+		return out
+	case primitive.M:
 		out := make(map[string]string, len(m))
 		for k, val := range m {
 			out[k] = asString(val)

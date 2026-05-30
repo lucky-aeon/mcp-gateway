@@ -16,7 +16,7 @@ export default function AdminLayout({
 }: {
   children?: React.ReactNode
 }) {
-  const { sidebarOpen } = useAppStore()
+  const { sidebarOpen, currentUser, setCurrentUser } = useAppStore()
   const router = useRouter()
   const { data: me, error, isLoading } = useGatewaySWR<MeInfo>('/api/v1/auth/me')
 
@@ -26,6 +26,12 @@ export default function AdminLayout({
       router.replace('/login')
     }
   }, [error, router])
+
+  useEffect(() => {
+    if (me) {
+      setCurrentUser(me)
+    }
+  }, [me, setCurrentUser])
 
   if (error && !(error instanceof GatewayApiError && error.status === 401)) {
     return (
@@ -37,7 +43,7 @@ export default function AdminLayout({
     )
   }
 
-  if (isLoading || !me) {
+  if (isLoading || !me || currentUser?.id !== me.id) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/30">
         <div className="flex items-center gap-3 rounded-xl border bg-card px-5 py-4 text-sm text-muted-foreground shadow-sm">

@@ -257,12 +257,28 @@ func (s *Session) SubscribeSSE(xl xlog.Logger, mcpName McpName, sseUrl string) e
 	if err != nil {
 		return fmt.Errorf("failed to create SSE client: %w", err)
 	}
+	return s.subscribeMCPClient(xl, mcpName, cli, "SSE")
+}
 
-	if err = cli.Start(context.TODO()); err != nil {
-		return fmt.Errorf("failed to start SSE client: %w", err)
+// SubscribeStreamHTTP 订阅 Streamable HTTP MCP 服务。
+func (s *Session) SubscribeStreamHTTP(xl xlog.Logger, mcpName McpName, streamURL string) error {
+	cli, err := client.NewStreamableHttpClient(streamURL)
+	if err != nil {
+		return fmt.Errorf("failed to create Streamable HTTP client: %w", err)
+	}
+	return s.subscribeMCPClient(xl, mcpName, cli, "Streamable HTTP")
+}
+
+func (s *Session) subscribeMCPClient(xl xlog.Logger, mcpName McpName, cli *client.Client, protocol string) error {
+	if err := cli.Start(context.Background()); err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("failed to start %s client: %w", protocol, err)
 	}
 
-	result, err := cli.Initialize(context.TODO(), mcp.InitializeRequest{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := cli.Initialize(ctx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
@@ -272,14 +288,16 @@ func (s *Session) SubscribeSSE(xl xlog.Logger, mcpName McpName, sseUrl string) e
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize SSE client: %w", err)
+		_ = cli.Close()
+		return fmt.Errorf("failed to initialize %s client: %w", protocol, err)
 	}
 
-	if err = cli.Ping(context.TODO()); err != nil {
-		return fmt.Errorf("failed to ping SSE client: %w", err)
+	if err = cli.Ping(ctx); err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("failed to ping %s client: %w", protocol, err)
 	}
 
-	xl.Info("SSE client initialized and connected successfully")
+	xl.Infof("%s client initialized and connected successfully", protocol)
 
 	// 优化：批量更新状态，减少锁竞争
 	s.mu.Lock()

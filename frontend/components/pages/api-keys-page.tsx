@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/select'
 import { gatewayApi, invalidate, saveGatewayApiKey, useGatewaySWR, type ListData, type MetaInfo, type UserAPIKey, type Workspace } from '@/lib/gateway-api'
 import { useAppStore } from '@/lib/store'
+import { runAction } from '@/lib/action-feedback'
 
 function maskKey(key: string) {
   if (key.length < 12) return key
@@ -53,9 +54,16 @@ function SingleKeyAPIKeysPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
 
   async function copyKey(key: string) {
-    await navigator.clipboard.writeText(key)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+    const ok = await runAction(
+      async () => {
+        await navigator.clipboard.writeText(key)
+      },
+      { errorTitle: '复制失败' }
+    )
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
   }
 
   const currentKey = latestKey || data?.api_key || ''
@@ -138,14 +146,16 @@ function SingleKeyAPIKeysPage() {
                       disabled={rotating}
                       onClick={async () => {
                         setRotating(true)
-                        try {
+                        await runAction(
+                          async () => {
                           const result = await gatewayApi.rotateSystemApiKey()
                           saveGatewayApiKey(result.api_key)
                           setLatestKey(result.api_key)
                           await invalidate('/api/v1/system/api-key')
-                        } finally {
-                          setRotating(false)
-                        }
+                          },
+                          { successTitle: '轮换成功', successDescription: '新密钥已生成，请及时复制', errorTitle: '轮换失败' }
+                        )
+                        setRotating(false)
                       }}
                     >
                       {rotating ? '轮换中...' : '确认轮换'}
@@ -190,28 +200,40 @@ function SaaSAPIKeysPage() {
   const activeCount = useMemo(() => items.filter((item) => item.status === 'active').length, [items])
 
   async function copy(text: string) {
-    await navigator.clipboard.writeText(text)
+    await runAction(
+      async () => {
+        await navigator.clipboard.writeText(text)
+      },
+      { successTitle: '已复制', errorTitle: '复制失败' }
+    )
   }
 
   async function handleCreate() {
     setCreating(true)
-    try {
-      const result = await gatewayApi.createAPIKey({
-        name: form.name,
-        workspace_id: form.workspaceId === 'personal' ? undefined : form.workspaceId,
-        scope: form.scope.split(',').map((item) => item.trim()).filter(Boolean),
-        expires_at: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
-      })
-      setCreatedKey(result.raw_key || null)
-      await invalidate('/api/v1/api-keys')
-    } finally {
-      setCreating(false)
-    }
+    await runAction(
+      async () => {
+        const result = await gatewayApi.createAPIKey({
+          name: form.name,
+          workspace_id: form.workspaceId === 'personal' ? undefined : form.workspaceId,
+          scope: form.scope.split(',').map((item) => item.trim()).filter(Boolean),
+          expires_at: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
+        })
+        setCreatedKey(result.raw_key || null)
+        await invalidate('/api/v1/api-keys')
+      },
+      { successTitle: '创建成功', successDescription: 'API 密钥已创建', errorTitle: '创建失败' }
+    )
+    setCreating(false)
   }
 
   async function handleRevoke(id: string) {
-    await gatewayApi.revokeAPIKey(id)
-    await invalidate('/api/v1/api-keys')
+    await runAction(
+      async () => {
+        await gatewayApi.revokeAPIKey(id)
+        await invalidate('/api/v1/api-keys')
+      },
+      { successTitle: '吊销成功', errorTitle: '吊销失败' }
+    )
   }
 
   return (

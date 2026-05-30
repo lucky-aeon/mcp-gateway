@@ -3,6 +3,8 @@ package admin
 import (
 	"sync"
 	"time"
+
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
 )
 
 type workspaceMeta struct {
@@ -37,6 +39,7 @@ type controlPlaneState struct {
 	mu         sync.RWMutex
 	workspaces map[string]*workspaceMeta
 	services   map[string]map[string]*serviceMeta
+	installed  map[string]map[string]*identity.InstalledPackage
 	activities []activityItem
 }
 
@@ -44,6 +47,7 @@ func newControlPlaneState() *controlPlaneState {
 	return &controlPlaneState{
 		workspaces: make(map[string]*workspaceMeta),
 		services:   make(map[string]map[string]*serviceMeta),
+		installed:  make(map[string]map[string]*identity.InstalledPackage),
 		activities: make([]activityItem, 0, 64),
 	}
 }
@@ -197,6 +201,79 @@ func (s *controlPlaneState) deleteService(workspaceID, name string) {
 	if ws, ok := s.workspaces[workspaceID]; ok {
 		ws.LastActivityAt = time.Now().UTC()
 	}
+}
+
+func (s *controlPlaneState) upsertInstalledPackage(accountID string, item identity.InstalledPackage) identity.InstalledPackage {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if accountID == "" {
+		accountID = "admin"
+	}
+	if _, ok := s.installed[accountID]; !ok {
+		s.installed[accountID] = make(map[string]*identity.InstalledPackage)
+	}
+	for _, existing := range s.installed[accountID] {
+		if existing.PackageID == item.PackageID {
+			item.ID = existing.ID
+			item.CreatedAt = existing.CreatedAt
+			break
+		}
+	}
+	if item.ID == "" {
+		item.ID = item.PackageID
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	item.UpdatedAt = now
+	cp := item
+	s.installed[accountID][item.ID] = &cp
+	return cp
+}
+
+func (s *controlPlaneState) getInstalledPackage(accountID, id string) (*identity.InstalledPackage, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := s.installed[accountID]
+	if items == nil {
+		items = s.installed["admin"]
+	}
+	item, ok := items[id]
+	if !ok {
+		return nil, false
+	}
+	cp := *item
+	return &cp, true
+}
+
+func (s *controlPlaneState) listInstalledPackages(accountID string) []identity.InstalledPackage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := s.installed[accountID]
+	if items == nil {
+		items = s.installed["admin"]
+	}
+	out := make([]identity.InstalledPackage, 0, len(items))
+	for _, item := range items {
+		cp := *item
+		out = append(out, cp)
+	}
+	return out
+}
+
+func (s *controlPlaneState) deleteInstalledPackage(accountID, id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.installed[accountID]; !ok {
+		return false
+	}
+	if _, ok := s.installed[accountID][id]; !ok {
+		return false
+	}
+	delete(s.installed[accountID], id)
+	return true
 }
 
 func (s *controlPlaneState) appendActivity(item activityItem) {

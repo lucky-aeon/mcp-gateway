@@ -38,7 +38,8 @@ export default function LoginPage() {
 
         if (hasGatewayAuth()) {
           try {
-            await gatewayApi.getMe()
+            const me = await gatewayApi.getMe()
+            setCurrentUser(me)
             router.replace('/dashboard')
             return
           } catch {

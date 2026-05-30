@@ -83,29 +83,66 @@ export type LogEntry = {
 }
 
 export type InstalledItem = {
+  id: string
+  account_id: string
   package_id: string
   package_name: string
+  display_name: string
   installed_version: string
   latest_version: string
-  workspace_id: string
-  workspace_name: string
-  service_name: string
+  source_id?: string
+  install_option_index: number
+  config_snapshot?: Record<string, unknown>
+  package_snapshot?: Record<string, unknown>
   status: string
   installed_at: string
+  updated_at: string
 }
 
 export type MarketPackage = {
   id: string
+  canonical_name?: string
   name: string
+  title?: string
   version: string
   description: string
   author: string
   tags: string[]
   rating: number
   downloads: number
+  use_count?: number
   verified: boolean
-  source_id: string
+  source_id?: string
   category?: string
+  repository?: string
+  homepage?: string
+  license?: string
+  installability?: 'installable' | 'config_required' | 'manual' | 'unsupported'
+  install_options?: Array<{
+    type: string
+    command?: string
+    args?: string[]
+    env?: Record<string, string>
+    url?: string
+    transport?: string
+    image?: string
+    package_name?: string
+    source_id: string
+    confidence: string
+    required_env?: Array<{
+      name: string
+      description?: string
+      required: boolean
+      default?: string
+      secret?: boolean
+    }>
+  }>
+  source_refs?: Array<{
+    source_id: string
+    external_id: string
+    url?: string
+    version?: string
+  }>
   tools: Array<{
     name: string
     description: string
@@ -113,6 +150,36 @@ export type MarketPackage = {
   }>
   readme?: string
   versions?: string[]
+}
+
+export type MarketPackageInput = {
+  name: string
+  title?: string
+  description: string
+  author?: string
+  version?: string
+  tags?: string[]
+  category?: string
+  repository?: string
+  homepage?: string
+  license?: string
+  verified?: boolean
+  install_options?: MarketPackage['install_options']
+  tools?: MarketPackage['tools']
+}
+
+export type MarketSource = {
+  id: string
+  name: string
+  kind: string
+  url: string
+  trusted: boolean
+  enabled: boolean
+  priority: number
+  status: string
+  last_synced?: string
+  last_error?: string
+  total_items: number
 }
 
 export type SystemConfig = {
@@ -266,13 +333,31 @@ export const gatewayApi = {
     request<{ id: string }>(`/api/v1/workspaces/${workspaceId}/sessions/${sessionId}`, { method: 'DELETE' }),
   getSession: (sessionId: string) => request<Session & { recent_messages: unknown[] }>(`/api/v1/sessions/${sessionId}`),
   listInstalled: () => request<ListData<InstalledItem>>('/api/v1/installed'),
+  deleteInstalled: (id: string) =>
+    request<{ id: string }>(`/api/v1/installed/${id}`, { method: 'DELETE' }),
   listAPIKeys: () => request<ListData<UserAPIKey>>('/api/v1/api-keys'),
   createAPIKey: (body: { name: string; workspace_id?: string; scope: string[]; expires_at?: string }) =>
     request<UserAPIKey>('/api/v1/api-keys', { method: 'POST', body: JSON.stringify(body) }),
   revokeAPIKey: (id: string) => request<{ id: string; status: string }>(`/api/v1/api-keys/${id}/revoke`, { method: 'POST' }),
-  listMarketSources: () => request<ListData<Record<string, unknown>>>('/api/v1/market/sources'),
+  listMarketSources: () => request<ListData<MarketSource>>('/api/v1/market/sources'),
   listMarketPackages: () => request<ListData<MarketPackage>>('/api/v1/market/packages'),
   getMarketPackage: (id: string) => request<MarketPackage>(`/api/v1/market/packages/${id}`),
+  createMarketPackage: (body: MarketPackageInput) =>
+    request<MarketPackage>('/api/v1/market/packages', { method: 'POST', body: JSON.stringify(body) }),
+  updateMarketPackage: (id: string, body: MarketPackageInput) =>
+    request<MarketPackage>(`/api/v1/market/packages/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteMarketPackage: (id: string) =>
+    request<{ id: string }>(`/api/v1/market/packages/${id}`, { method: 'DELETE' }),
+  syncMarketSource: (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/market/sources/${id}/sync`, { method: 'POST' }),
+  installMarketPackage: (
+    id: string,
+    body: { display_name?: string; install_option_index?: number; env?: Record<string, string> }
+  ) => request<InstalledItem>(`/api/v1/market/packages/${id}/install`, { method: 'POST', body: JSON.stringify(body) }),
+  deployInstalledPackage: (
+    workspaceId: string,
+    body: { installed_id: string; service_name?: string; env?: Record<string, string> }
+  ) => request<Service>(`/api/v1/workspaces/${workspaceId}/services:from-installed`, { method: 'POST', body: JSON.stringify(body) }),
   getSystemConfig: () => request<SystemConfig>('/api/v1/system/config'),
   updateSystemConfig: (body: Partial<SystemConfig>) =>
     request<SystemConfig>('/api/v1/system/config', { method: 'PUT', body: JSON.stringify(body) }),

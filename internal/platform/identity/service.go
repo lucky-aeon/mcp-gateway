@@ -82,6 +82,21 @@ type MCPServer struct {
 	UpdatedAt   time.Time              `bson:"updated_at" json:"updated_at"`
 }
 
+type InstalledPackage struct {
+	ID                 string                 `bson:"id" json:"id"`
+	AccountID          string                 `bson:"account_id" json:"account_id"`
+	PackageID          string                 `bson:"package_id" json:"package_id"`
+	PackageName        string                 `bson:"package_name" json:"package_name"`
+	DisplayName        string                 `bson:"display_name" json:"display_name"`
+	Version            string                 `bson:"version" json:"version"`
+	SourceID           string                 `bson:"source_id" json:"source_id"`
+	InstallOptionIndex int                    `bson:"install_option_index" json:"install_option_index"`
+	ConfigSnapshot     map[string]interface{} `bson:"config_snapshot" json:"config_snapshot"`
+	PackageSnapshot    map[string]interface{} `bson:"package_snapshot" json:"package_snapshot"`
+	CreatedAt          time.Time              `bson:"created_at" json:"created_at"`
+	UpdatedAt          time.Time              `bson:"updated_at" json:"updated_at"`
+}
+
 type APIKey struct {
 	ID          string     `bson:"id" json:"id"`
 	AccountID   string     `bson:"account_id" json:"account_id"`
@@ -135,6 +150,10 @@ type Store interface {
 	GetMCPServer(context.Context, string, string) (*MCPServer, error)
 	ListMCPServers(context.Context, string) ([]MCPServer, error)
 	DeleteMCPServer(context.Context, string, string) error
+	UpsertInstalledPackage(context.Context, *InstalledPackage) error
+	GetInstalledPackage(context.Context, string, string) (*InstalledPackage, error)
+	ListInstalledPackages(context.Context, string) ([]InstalledPackage, error)
+	DeleteInstalledPackage(context.Context, string, string) error
 	CreateAPIKey(context.Context, *APIKey) error
 	ListAPIKeysByAccount(context.Context, string) ([]APIKey, error)
 	FindAPIKeyByHash(context.Context, string) (*APIKey, error)
@@ -183,8 +202,30 @@ func (s *Service) Bootstrap(ctx context.Context) error {
 	if !s.IsSaaS() || s.store == nil {
 		return nil
 	}
-	_, err := s.store.UpsertAdmin(ctx, s.cfg.Auth.AdminEmail, s.cfg.Auth.AdminDisplayName, s.cfg.Auth.AdminPassword)
-	return err
+	admin, err := s.store.UpsertAdmin(ctx, s.cfg.Auth.AdminEmail, s.cfg.Auth.AdminDisplayName, s.cfg.Auth.AdminPassword)
+	if err != nil {
+		return err
+	}
+
+	const defaultWorkspaceID = "default"
+	now := time.Now().UTC()
+	if _, err := s.store.GetWorkspace(ctx, defaultWorkspaceID); err != nil {
+		_ = s.store.CreateWorkspace(ctx, &Workspace{
+			ID:          defaultWorkspaceID,
+			Name:        "Default Workspace",
+			Description: "默认工作空间",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+	}
+	return s.store.UpsertWorkspaceMember(ctx, &WorkspaceMember{
+		ID:          uuid.NewString(),
+		WorkspaceID: defaultWorkspaceID,
+		AccountID:   admin.ID,
+		Role:        RoleWorkspaceOwner,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 }
 
 func (s *Service) RegisterAccount(ctx context.Context, email, password, displayName string) (map[string]interface{}, error) {
@@ -616,6 +657,34 @@ func (s *Service) DeleteMCPServer(ctx context.Context, workspaceID, name string)
 		return nil
 	}
 	return s.store.DeleteMCPServer(ctx, workspaceID, name)
+}
+
+func (s *Service) UpsertInstalledPackage(ctx context.Context, item *InstalledPackage) error {
+	if !s.IsSaaS() || s.store == nil {
+		return nil
+	}
+	return s.store.UpsertInstalledPackage(ctx, item)
+}
+
+func (s *Service) GetInstalledPackage(ctx context.Context, accountID, id string) (*InstalledPackage, error) {
+	if !s.IsSaaS() || s.store == nil {
+		return nil, nil
+	}
+	return s.store.GetInstalledPackage(ctx, accountID, id)
+}
+
+func (s *Service) ListInstalledPackages(ctx context.Context, accountID string) ([]InstalledPackage, error) {
+	if !s.IsSaaS() || s.store == nil {
+		return nil, nil
+	}
+	return s.store.ListInstalledPackages(ctx, accountID)
+}
+
+func (s *Service) DeleteInstalledPackage(ctx context.Context, accountID, id string) error {
+	if !s.IsSaaS() || s.store == nil {
+		return nil
+	}
+	return s.store.DeleteInstalledPackage(ctx, accountID, id)
 }
 
 func (s *Service) AppendAuditLog(ctx context.Context, principal *Principal, action, resourceType, resourceID, workspaceID string, detail map[string]interface{}) {

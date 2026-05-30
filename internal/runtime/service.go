@@ -28,6 +28,12 @@ const (
 	Failed   CmdStatus = "Failed"
 )
 
+const (
+	bridgeInitTimeout   = 20 * time.Second
+	bridgePingTimeout   = 3 * time.Second
+	bridgeStartupWindow = 3 * time.Second
+)
+
 type ExportMcpService interface {
 	GetUrl() string
 	GetSSEUrl() string
@@ -181,7 +187,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	logger.Infof("Creating stdio-sse bridge for command: %s %s", s.Config.Command, strings.Join(s.Config.Args, " "))
 
 	// 创建stdio-sse桥接
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeInitTimeout)
 	defer cancel()
 
 	var bridgeInstance bridge.Bridge
@@ -223,12 +229,16 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	}()
 
 	// 等待服务器启动结果，最多等待3秒
-	startupTimeout := time.NewTimer(3 * time.Second)
+	startupTimeout := time.NewTimer(bridgeStartupWindow)
 	defer startupTimeout.Stop()
 
 	select {
 	case err := <-startupChan:
 		if err != nil {
+			if closeErr := bridgeInstance.Close(); closeErr != nil {
+				logger.Warnf("failed to close bridge after startup error: %v", closeErr)
+			}
+			s.bridge = nil
 			logger.Warnf("close logfile: %v", logFile.Close())
 			s.LastError = err.Error()
 			s.FailureReason = "Bridge server startup failed"
@@ -243,7 +253,13 @@ func (s *McpService) Start(logger xlog.Logger) error {
 		logger.Infof("Bridge server startup timeout - checking if server is running")
 
 		// 简单检查：尝试ping bridge
-		if err := bridgeInstance.Ping(context.Background()); err != nil {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), bridgePingTimeout)
+		defer pingCancel()
+		if err := bridgeInstance.Ping(pingCtx); err != nil {
+			if closeErr := bridgeInstance.Close(); closeErr != nil {
+				logger.Warnf("failed to close bridge after health check error: %v", closeErr)
+			}
+			s.bridge = nil
 			logger.Warnf("close logfile: %v", logFile.Close())
 			s.LastError = fmt.Sprintf("Bridge health check failed: %v", err)
 			s.FailureReason = "Bridge server not responding"
