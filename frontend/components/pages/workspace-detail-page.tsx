@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import Link from 'next/link'
+import Link from '@/components/router-link'
 import { AlertCircle, ArrowLeft, CheckCircle, Clock, FileText, Filter, Layers, MoreHorizontal, Package, Play, Plus, RefreshCw, Settings, Square, Trash2, Users, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'

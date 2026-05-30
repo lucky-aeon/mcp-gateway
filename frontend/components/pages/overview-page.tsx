@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/router-link'
 import { Activity, ArrowRight, Clock, Layers, Package, TrendingUp, Users, Wrench } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'

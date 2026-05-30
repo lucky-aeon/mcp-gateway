@@ -2,7 +2,7 @@
 
 import { OpsDashboardPage } from '@/components/pages/ops-dashboard-page'
 import { useAppStore } from '@/lib/store'
-import { useRouter } from 'next/navigation'
+import { useRouter } from '@/lib/router'
 import { useEffect } from 'react'
 
 export default function Page() {

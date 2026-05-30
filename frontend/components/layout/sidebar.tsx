@@ -22,8 +22,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import Link from '@/components/router-link'
+import { usePathname } from '@/lib/router'
 
 interface NavItem {
   href: string

@@ -27,7 +27,7 @@ type DebugRequest struct {
 // DebugResponse 调试响应结构
 type DebugResponse struct {
 	Success     bool                   `json:"success"`
-	Response    map[string]interface{} `json:"response,omitempty"`
+	Response    map[string]any         `json:"response,omitempty"`
 	Error       string                 `json:"error,omitempty"`
 	ServiceInfo runtime.McpServiceInfo `json:"service_info"`
 	RequestLog  string                 `json:"request_log,omitempty"`

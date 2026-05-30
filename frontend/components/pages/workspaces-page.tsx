@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import Link from 'next/link'
+import Link from '@/components/router-link'
 import { ArrowRight, Calendar, Copy, Layers, MoreHorizontal, Package, Plus, Search, Settings, Trash2, Users } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'

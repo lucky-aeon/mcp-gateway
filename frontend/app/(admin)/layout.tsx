@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { Outlet } from 'react-router-dom'
+import { useRouter } from '@/lib/router'
 import { Loader2 } from 'lucide-react'
 
 import { useAppStore } from '@/lib/store'
@@ -13,7 +14,7 @@ import { clearGatewayAuth, GatewayApiError, useGatewaySWR, type MeInfo } from '@
 export default function AdminLayout({
   children,
 }: {
-  children: React.ReactNode
+  children?: React.ReactNode
 }) {
   const { sidebarOpen } = useAppStore()
   const router = useRouter()
@@ -57,7 +58,7 @@ export default function AdminLayout({
           sidebarOpen ? 'pl-64' : 'pl-16'
         )}
       >
-        <div className="container mx-auto max-w-7xl p-6 lg:p-8">{children}</div>
+        <div className="container mx-auto max-w-7xl p-6 lg:p-8">{children ?? <Outlet />}</div>
       </main>
     </div>
   )

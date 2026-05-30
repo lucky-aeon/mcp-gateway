@@ -1,7 +1,8 @@
 "use client"
 
-import Link from "next/link"
-import { usePathname } from "next/navigation"
+import Link from "@/components/router-link"
+import { usePathname } from "@/lib/router"
+import { Outlet } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Menu, X } from "lucide-react"
 import { useState } from "react"
@@ -199,12 +200,12 @@ function MarketingFooter() {
 export default function MarketingLayout({
   children,
 }: {
-  children: React.ReactNode
+  children?: React.ReactNode
 }) {
   return (
     <div className="flex min-h-screen flex-col">
       <MarketingHeader />
-      <main className="flex-1">{children}</main>
+      <main className="flex-1">{children ?? <Outlet />}</main>
       <MarketingFooter />
     </div>
   )

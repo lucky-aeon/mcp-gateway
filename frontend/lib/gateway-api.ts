@@ -2,7 +2,7 @@
 
 import useSWR, { mutate } from 'swr'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8080'
+const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
 type Envelope<T> = {
   success: boolean

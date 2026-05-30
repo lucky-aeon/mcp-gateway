@@ -18,8 +18,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { usePathname, useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { usePathname, useRouter } from '@/lib/router'
+import Link from '@/components/router-link'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { clearGatewayAuth, useGatewaySWR, type MeInfo } from '@/lib/gateway-api'
