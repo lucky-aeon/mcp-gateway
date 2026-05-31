@@ -93,16 +93,20 @@ func NewMcpService(name string, cfg config.MCPServerConfig, portMgr PortManagerI
 
 // IsSSE 判断是否是SSE类型
 func (s *McpService) IsSSE() bool {
-	if s.Config.Command == "" && s.Config.URL != "" {
-		s.Status = Running
-		return true
-	}
-	return false
+	return s.Config.Command == "" && s.Config.URL != ""
 }
 
 // Stop 停止服务
 func (s *McpService) Stop(logger xlog.Logger) (err error) {
 	if s.IsSSE() {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
+		if s.Status != Running && s.Status != Starting {
+			return nil
+		}
+		logger.Infof("Stopping remote service %s", s.Name)
+		s.Status = Stopped
+		s.LastStoppedAt = time.Now()
 		return
 	}
 	s.mutex.Lock()
@@ -143,6 +147,16 @@ func (s *McpService) Stop(logger xlog.Logger) (err error) {
 // Start 启动服务
 func (s *McpService) Start(logger xlog.Logger) error {
 	if s.IsSSE() {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
+		if s.Status == Running {
+			return nil
+		}
+		s.Status = Running
+		s.LastStartedAt = time.Now()
+		s.LastError = ""
+		s.FailureReason = ""
+		s.HealthCheckURL = s.Config.URL
 		logger.Infof("服务 %s 是 SSE 类型，无需启动进程", s.Name)
 		return nil
 	}
@@ -290,7 +304,13 @@ func (s *McpService) Start(logger xlog.Logger) error {
 // Restart 重启服务
 func (s *McpService) Restart(logger xlog.Logger) {
 	if s.IsSSE() {
-		logger.Infof("服务 %s 是 SSE 类型，无需重启进程", s.Name)
+		logger.Infof("服务 %s 是 SSE 类型，刷新运行状态", s.Name)
+		if err := s.Stop(logger); err != nil {
+			logger.Errorf("Failed to stop remote service %s during restart: %v", s.Name, err)
+		}
+		if err := s.Start(logger); err != nil {
+			logger.Errorf("Failed to restart remote service %s: %v", s.Name, err)
+		}
 		return
 	}
 

@@ -28,6 +28,7 @@ func (h *Handler) handleDeployServiceToWorkspace(c echo.Context) error {
 				"error": err.Error(),
 			})
 		}
+		h.markStoredServiceDesiredStatus(c.Request().Context(), workspaceID, name, serviceDesiredStatusRunning)
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
@@ -69,6 +70,7 @@ func (h *Handler) handleUpdateServiceConfig(c echo.Context) error {
 			"error": err.Error(),
 		})
 	}
+	h.markStoredServiceDesiredStatus(c.Request().Context(), workspaceID, serviceName, serviceDesiredStatusRunning)
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
 }
@@ -103,6 +105,7 @@ func (h *Handler) handleStopService(c echo.Context) error {
 		Workspace: workspaceID,
 		Server:    serviceName,
 	})
+	h.markStoredServiceDesiredStatus(c.Request().Context(), workspaceID, serviceName, serviceDesiredStatusStopped)
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
 }
@@ -132,6 +135,7 @@ func (h *Handler) handleStartService(c echo.Context) error {
 			"error": err.Error(),
 		})
 	}
+	h.markStoredServiceDesiredStatus(c.Request().Context(), workspaceID, serviceName, serviceDesiredStatusRunning)
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "success"})
 }

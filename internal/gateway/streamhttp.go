@@ -31,6 +31,11 @@ func (h *Handler) handleStreamHTTP(c echo.Context) error {
 	serviceName := c.Param("service")
 	workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)
 
+	if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
+		xl.Errorf("restore workspace services failed: %v", err)
+		return c.String(http.StatusInternalServerError, err.Error())
+	}
+
 	instance, err := h.services.GetMcpService(xl, workspaces.NameArg{
 		Server:    serviceName,
 		Workspace: workspace,
@@ -145,6 +150,10 @@ func (h *Handler) streamHTTPHandlePost(c echo.Context, xl xlog.Logger, workspace
 // streamHTTPHandleInitialize 处理首次 initialize：创建 session，响应头带 session id，
 // body 返回聚合 InitializeResult（下游 MCP 的 initialize 已在 session 建立时完成）。
 func (h *Handler) streamHTTPHandleInitialize(c echo.Context, xl xlog.Logger, workspace string, peek jsonRPCPeek) error {
+	if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
+		xl.Errorf("restore workspace services failed: %v", err)
+		return writeJSONRPCError(c, http.StatusInternalServerError, peek.ID, -32000, "failed to restore workspace services", err.Error())
+	}
 	session, err := h.services.CreateProxySession(xl, workspaces.NameArg{
 		Workspace: workspace,
 	})

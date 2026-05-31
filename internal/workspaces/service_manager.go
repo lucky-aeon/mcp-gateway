@@ -1,6 +1,8 @@
 package workspaces
 
 import (
+	"sync"
+
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/errs"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
@@ -33,6 +35,7 @@ type ServiceManager struct {
 	cfg          config.Config
 	PortMgr      runtime.PortManagerI
 	workSpaceMgr *WorkspaceManager
+	deployMu     sync.Mutex
 }
 
 func NewServiceMgr(cfg config.Config, portMgr runtime.PortManagerI) *ServiceManager {
@@ -44,6 +47,9 @@ func NewServiceMgr(cfg config.Config, portMgr runtime.PortManagerI) *ServiceMana
 }
 
 func (s *ServiceManager) DeployServer(logger xlog.Logger, name NameArg, config config.MCPServerConfig) (AddMcpServiceResult, error) {
+	s.deployMu.Lock()
+	defer s.deployMu.Unlock()
+
 	workspace, _ := s.getWorkspace(logger, name.Workspace)
 	return workspace.AddMcpService(logger, name.Server, config)
 }

@@ -47,6 +47,12 @@ type listData struct {
 	PageSize int         `json:"page_size"`
 }
 
+const (
+	serviceDesiredStatusKey     = "desired_status"
+	serviceDesiredStatusRunning = "running"
+	serviceDesiredStatusStopped = "stopped"
+)
+
 func (h *Handler) registerV1Routes(e *echo.Echo) {
 	publicV1 := e.Group("/api/v1")
 	publicV1.GET("/meta", h.handleV1Meta)
@@ -864,13 +870,6 @@ func (h *Handler) handleV1CreateService(c echo.Context) error {
 	h.state.upsertService(wsID, meta)
 	// 保存到数据库
 	if h.auth != nil {
-		configMap := map[string]interface{}{
-			"url":              cfg.URL,
-			"command":          cfg.Command,
-			"args":             cfg.Args,
-			"env":              cfg.Env,
-			"gateway_protocol": cfg.GatewayProtocol,
-		}
 		_ = h.auth.CreateMCPServer(c.Request().Context(), &identity.MCPServer{
 			ID:          uuid.NewString(),
 			Name:        name,
@@ -878,7 +877,7 @@ func (h *Handler) handleV1CreateService(c echo.Context) error {
 			SourceType:  meta.SourceType,
 			SourceRef:   meta.SourceRef,
 			Version:     meta.Version,
-			Config:      configMap,
+			Config:      serviceConfigToMapWithDesiredStatus(cfg, serviceDesiredStatusRunning),
 			CreatedAt:   meta.CreatedAt,
 			UpdatedAt:   time.Now().UTC(),
 		})
@@ -949,7 +948,7 @@ func (h *Handler) handleV1CreateServiceFromInstalled(c echo.Context) error {
 			SourceType:  meta.SourceType,
 			SourceRef:   meta.SourceRef,
 			Version:     meta.Version,
-			Config:      serviceConfigToMap(cfg),
+			Config:      serviceConfigToMapWithDesiredStatus(cfg, serviceDesiredStatusRunning),
 			CreatedAt:   meta.CreatedAt,
 			UpdatedAt:   time.Now().UTC(),
 		})
@@ -1004,6 +1003,19 @@ func (h *Handler) handleV1BatchCreateServices(c echo.Context) error {
 		meta.Name = name
 		meta.WorkspaceID = wsID
 		h.state.upsertService(wsID, meta)
+		if h.auth != nil {
+			_ = h.auth.CreateMCPServer(c.Request().Context(), &identity.MCPServer{
+				ID:          uuid.NewString(),
+				Name:        name,
+				WorkspaceID: wsID,
+				SourceType:  meta.SourceType,
+				SourceRef:   meta.SourceRef,
+				Version:     meta.Version,
+				Config:      serviceConfigToMapWithDesiredStatus(cfg, serviceDesiredStatusRunning),
+				CreatedAt:   meta.CreatedAt,
+				UpdatedAt:   time.Now().UTC(),
+			})
+		}
 		results[name] = map[string]string{"status": string(res), "message": "ok"}
 		summary[string(res)]++
 	}
@@ -1037,6 +1049,23 @@ func (h *Handler) handleV1UpdateService(c echo.Context) error {
 	meta.Name = name
 	meta.WorkspaceID = wsID
 	h.state.upsertService(wsID, meta)
+	if h.auth != nil {
+		createdAt := meta.CreatedAt
+		if existing, err := h.auth.GetMCPServer(c.Request().Context(), wsID, name); err == nil && existing != nil && !existing.CreatedAt.IsZero() {
+			createdAt = existing.CreatedAt
+		}
+		_ = h.auth.CreateMCPServer(c.Request().Context(), &identity.MCPServer{
+			ID:          uuid.NewString(),
+			Name:        name,
+			WorkspaceID: wsID,
+			SourceType:  meta.SourceType,
+			SourceRef:   meta.SourceRef,
+			Version:     meta.Version,
+			Config:      serviceConfigToMapWithDesiredStatus(cfg, serviceDesiredStatusRunning),
+			CreatedAt:   createdAt,
+			UpdatedAt:   time.Now().UTC(),
+		})
+	}
 	h.appendAudit(c, "service.update", "service", name, wsID, nil)
 	return respondOK(c, h.findServiceView(wsID, name))
 }
@@ -1100,6 +1129,7 @@ func (h *Handler) handleV1StartService(c echo.Context) error {
 	if _, err := h.DeployServer(name, cfg); err != nil {
 		return respondError(c, http.StatusInternalServerError, "MCP_DEPLOY_FAILED", err.Error(), nil)
 	}
+	h.markStoredServiceDesiredStatus(c.Request().Context(), wsID, name, serviceDesiredStatusRunning)
 
 	// 等待一小段时间，确保服务启动完成
 	time.Sleep(100 * time.Millisecond)
@@ -1129,6 +1159,7 @@ func (h *Handler) handleV1StopService(c echo.Context) error {
 		return err
 	}
 	h.services.StopServer(nilLogger{}, workspaces.NameArg{Workspace: c.Param("ws"), Server: c.Param("name")})
+	h.markStoredServiceDesiredStatus(c.Request().Context(), c.Param("ws"), c.Param("name"), serviceDesiredStatusStopped)
 	return respondOK(c, map[string]string{"status": "stopped"})
 }
 
@@ -1226,6 +1257,9 @@ func (h *Handler) handleV1CreateSession(c echo.Context) error {
 	wsID := c.Param("ws")
 	if err := h.requireWorkspaceRole(c, wsID, identity.RoleWorkspaceAdmin); err != nil {
 		return err
+	}
+	if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), wsID, nilLogger{}); err != nil {
+		return respondError(c, http.StatusInternalServerError, "MCP_DEPLOY_FAILED", err.Error(), nil)
 	}
 	sess, err := h.services.CreateProxySession(nilLogger{}, workspaces.NameArg{Workspace: wsID})
 	if err != nil {
@@ -1647,6 +1681,12 @@ func serviceConfigToMap(cfg config.MCPServerConfig) map[string]interface{} {
 	}
 }
 
+func serviceConfigToMapWithDesiredStatus(cfg config.MCPServerConfig, desiredStatus string) map[string]interface{} {
+	out := serviceConfigToMap(cfg)
+	out[serviceDesiredStatusKey] = desiredStatus
+	return out
+}
+
 func serviceConfigFromMap(raw map[string]interface{}, workspaceID string) config.MCPServerConfig {
 	cfg := config.MCPServerConfig{
 		Workspace: workspaceID,
@@ -1665,6 +1705,69 @@ func serviceConfigFromMap(raw map[string]interface{}, workspaceID string) config
 		cfg.Env = map[string]string{}
 	}
 	return cfg
+}
+
+func serviceDesiredStatus(raw map[string]interface{}) string {
+	if raw == nil {
+		return serviceDesiredStatusRunning
+	}
+	status := strings.ToLower(strings.TrimSpace(asString(raw[serviceDesiredStatusKey])))
+	if status == "" {
+		return serviceDesiredStatusRunning
+	}
+	return status
+}
+
+func serviceShouldAutoStart(raw map[string]interface{}) bool {
+	return serviceDesiredStatus(raw) != serviceDesiredStatusStopped
+}
+
+func (h *Handler) markStoredServiceDesiredStatus(ctx context.Context, workspaceID, name, status string) {
+	if h.auth == nil || !h.auth.IsSaaS() {
+		return
+	}
+	dbServer, err := h.auth.GetMCPServer(ctx, workspaceID, name)
+	if err != nil || dbServer == nil {
+		return
+	}
+	if dbServer.Config == nil {
+		dbServer.Config = map[string]interface{}{}
+	}
+	dbServer.Config[serviceDesiredStatusKey] = status
+	dbServer.UpdatedAt = time.Now().UTC()
+	_ = h.auth.CreateMCPServer(ctx, dbServer)
+}
+
+func (h *Handler) ensureWorkspaceServicesRunning(ctx context.Context, workspaceID string, logger xlog.Logger) error {
+	if h.auth == nil || !h.auth.IsSaaS() {
+		return nil
+	}
+	dbServers, err := h.auth.ListMCPServers(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	for _, dbServer := range dbServers {
+		h.state.upsertService(workspaceID, serviceMeta{
+			Name:          dbServer.Name,
+			WorkspaceID:   dbServer.WorkspaceID,
+			SourceType:    dbServer.SourceType,
+			SourceRef:     dbServer.SourceRef,
+			Version:       dbServer.Version,
+			CreatedAt:     dbServer.CreatedAt,
+			InstalledFrom: "database",
+		})
+		if !serviceShouldAutoStart(dbServer.Config) {
+			continue
+		}
+		cfg := serviceConfigFromMap(dbServer.Config, workspaceID)
+		if cfg.Workspace == "" {
+			cfg.Workspace = workspaceID
+		}
+		if _, err := h.DeployServer(dbServer.Name, cfg); err != nil {
+			return fmt.Errorf("deploy %s/%s: %w", workspaceID, dbServer.Name, err)
+		}
+	}
+	return nil
 }
 
 func marketPackageSnapshot(pkg MarketPackage) map[string]interface{} {

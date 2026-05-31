@@ -53,6 +53,12 @@ func (h *Handler) handleCreateSession(c echo.Context) error {
 	workspaceID := c.Param("workspace")
 	xl.Infof("Create session for workspace: %s", workspaceID)
 
+	if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspaceID, xl); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	session, err := h.services.CreateProxySession(xl, workspaces.NameArg{
 		Workspace: workspaceID,
 	})

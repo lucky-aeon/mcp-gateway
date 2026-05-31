@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"sync"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
@@ -11,10 +13,11 @@ import (
 // Handler 处理 MCP 协议流量（SSE / Streamable HTTP / 单服务代理）。
 // 它本身不持有业务状态，所有调用都委托给底层 workspaces.ServiceManagerI。
 type Handler struct {
-	services workspaces.ServiceManagerI
-	cfg      config.Config
-	auth     *identity.Service
-	oauth    *internalOAuthServer
+	services  workspaces.ServiceManagerI
+	cfg       config.Config
+	auth      *identity.Service
+	oauth     *internalOAuthServer
+	restoreMu sync.Mutex
 }
 
 // NewHandler 构造一个 gateway Handler。

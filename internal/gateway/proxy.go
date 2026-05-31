@@ -32,6 +32,11 @@ func (h *Handler) proxyHandler() echo.HandlerFunc {
 		// 获取workspace信息
 		workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)
 
+		if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
+			xl.Errorf("restore workspace services failed: %v", err)
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+
 		// 获取服务配置
 		instance, err := h.services.GetMcpService(xl, workspaces.NameArg{
 			Server:    serviceName,

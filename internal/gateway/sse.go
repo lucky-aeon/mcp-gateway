@@ -21,6 +21,10 @@ func (h *Handler) handleGlobalSSE(c echo.Context) error {
 	workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)
 	if querySessionId == "" {
 		xl.Infof("No session ID provided, creating new session")
+		if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
+			xl.Errorf("restore workspace services failed: %v", err)
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
 		// 没有sessionId，生成一个返回出
 		// create proxy session
 		session, err := h.services.CreateProxySession(xl, workspaces.NameArg{
