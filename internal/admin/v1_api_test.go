@@ -223,3 +223,40 @@ func TestHandleV1DeleteServiceRemovesControlPlaneRecordWhenRuntimeMissing(t *tes
 	assert.False(t, ok)
 	mockServiceMgr.AssertExpectations(t)
 }
+
+func TestHandleV1DeleteWorkspaceDoesNotRecreateEmptyRuntimeWorkspace(t *testing.T) {
+	e := echo.New()
+	cfg := &config.Config{}
+	cfg.Default()
+	serviceMgr := workspaces.NewServiceMgr(*cfg, runtime.NewPortManager())
+	h := &Handler{
+		services: serviceMgr,
+		cfg:      cfg,
+		state:    newControlPlaneState(),
+	}
+	h.state.upsertWorkspace("empty", "Empty", "")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/empty?cascade=true", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("ws")
+	c.SetParamValues("empty")
+
+	err := h.handleV1DeleteWorkspace(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces", nil)
+	listRec := httptest.NewRecorder()
+	listCtx := e.NewContext(listReq, listRec)
+
+	err = h.handleV1ListWorkspaces(listCtx)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, listRec.Code)
+
+	var resp envelope
+	err = json.Unmarshal(listRec.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	data := resp.Data.(map[string]interface{})
+	assert.Empty(t, data["items"])
+}

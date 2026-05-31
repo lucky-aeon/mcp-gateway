@@ -714,11 +714,28 @@ func (h *Handler) handleV1DeleteWorkspace(c echo.Context) error {
 	for _, sess := range h.services.GetWorkspaceSessions(nilLogger{}, workspaces.NameArg{Workspace: wsID}) {
 		h.services.CloseProxySession(nilLogger{}, workspaces.NameArg{Workspace: wsID, Session: sess.GetId()})
 	}
+	if workspaceDeleter, ok := h.services.(interface {
+		DeleteWorkspace(xlog.Logger, workspaces.NameArg)
+	}); ok {
+		workspaceDeleter.DeleteWorkspace(nilLogger{}, workspaces.NameArg{Workspace: wsID})
+	}
 	h.state.deleteWorkspace(wsID)
-	// 删除数据库中的工作区成员关系和工作区记录
 	if h.auth != nil {
-		_ = h.auth.DeleteWorkspaceMembers(c.Request().Context(), wsID)
-		_ = h.auth.DeleteWorkspace(c.Request().Context(), wsID)
+		if dbServers, err := h.auth.ListMCPServers(c.Request().Context(), wsID); err == nil {
+			for _, dbServer := range dbServers {
+				if err := h.auth.DeleteMCPServer(c.Request().Context(), wsID, dbServer.Name); err != nil && !isServiceNotFoundError(err) {
+					return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+				}
+			}
+		} else {
+			return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		}
+		if err := h.auth.DeleteWorkspaceMembers(c.Request().Context(), wsID); err != nil {
+			return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		}
+		if err := h.auth.DeleteWorkspace(c.Request().Context(), wsID); err != nil && !isServiceNotFoundError(err) {
+			return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		}
 	}
 	h.appendAudit(c, "workspace.delete", "workspace", wsID, wsID, nil)
 	return respondOK(c, map[string]string{"id": wsID})

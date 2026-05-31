@@ -68,3 +68,16 @@ func (m *WorkspaceManager) GetWorkspaces() map[string]*WorkSpace {
 	defer m.workspacesLock.RUnlock()
 	return m.workspaces
 }
+
+func (m *WorkspaceManager) DeleteWorkspace(xl xlog.Logger, workId string) {
+	m.workspacesLock.Lock()
+	workspace, ok := m.workspaces[workId]
+	if ok {
+		delete(m.workspaces, workId)
+	}
+	m.workspacesLock.Unlock()
+
+	if ok {
+		workspace.Close(xl)
+	}
+}

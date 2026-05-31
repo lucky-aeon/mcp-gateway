@@ -89,7 +89,10 @@ func (s *ServiceManager) GetMcpService(logger xlog.Logger, name NameArg) (runtim
 }
 
 func (s *ServiceManager) GetMcpServices(logger xlog.Logger, name NameArg) map[string]runtime.ExportMcpService {
-	workspace, _ := s.getWorkspace(logger, name.Workspace)
+	workspace, ok := s.getWorkspace(logger, name.Workspace, false)
+	if !ok {
+		return map[string]runtime.ExportMcpService{}
+	}
 	return workspace.GetMcpServices()
 }
 
@@ -104,7 +107,7 @@ func (s *ServiceManager) GetProxySession(logger xlog.Logger, name NameArg) (*ses
 }
 
 func (s *ServiceManager) GetWorkspaceSessions(logger xlog.Logger, name NameArg) []*sessions.Session {
-	workspace, ok := s.getWorkspace(logger, name.Workspace, true)
+	workspace, ok := s.getWorkspace(logger, name.Workspace, false)
 	if !ok {
 		return []*sessions.Session{}
 	}
@@ -117,11 +120,18 @@ func (s *ServiceManager) CloseProxySession(logger xlog.Logger, name NameArg) {
 }
 
 func (s *ServiceManager) DeleteServer(logger xlog.Logger, name NameArg) error {
-	workspace, _ := s.getWorkspace(logger, name.Workspace)
+	workspace, ok := s.getWorkspace(logger, name.Workspace, false)
+	if !ok {
+		return errs.ErrWorkspaceNotFound
+	}
 	if err := workspace.RemoveMcpService(logger, name.Server); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (s *ServiceManager) DeleteWorkspace(logger xlog.Logger, name NameArg) {
+	s.workSpaceMgr.DeleteWorkspace(logger, name.Workspace)
 }
 
 // Close stops all MCP services in all workspaces.
