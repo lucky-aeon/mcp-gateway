@@ -4,6 +4,9 @@ import useSWR, { mutate } from 'swr'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
+export type GatewayExposureProtocol = 'all' | 'sse' | 'streamhttp'
+export type GatewayMessageProtocol = 'sse' | 'streamhttp'
+
 type Envelope<T> = {
   success: boolean
   data: T
@@ -55,7 +58,7 @@ export type Service = {
   args?: string[]
   env?: Record<string, string>
   url?: string
-  gateway_protocol?: 'sse' | 'streamhttp'
+  gateway_protocol?: GatewayMessageProtocol
   auth_status?: 'authorized' | 'needs_auth' | ''
   status: 'starting' | 'running' | 'stopped' | 'failed'
   port?: number
@@ -197,7 +200,7 @@ export type MarketSource = {
 
 export type SystemConfig = {
   bind: string
-  gateway_protocol: 'sse' | 'streamhttp'
+  gateway_protocol: GatewayExposureProtocol
   session_gc_interval_seconds: number
   proxy_session_timeout_seconds: number
   mcp_retry_count: number
@@ -221,7 +224,7 @@ export type MetaInfo = {
   mode: string
   allow_register: boolean
   oauth_providers: string[]
-  gateway_protocol: 'sse' | 'streamhttp'
+  gateway_protocol: GatewayExposureProtocol
   version: string
   features: Record<string, boolean>
 }
@@ -451,7 +454,7 @@ export async function callGatewayMessage({
 }: {
   sessionId?: string
   body: Record<string, unknown>
-  protocol?: 'sse' | 'streamhttp'
+  protocol?: GatewayMessageProtocol
 }) {
   const headers = new Headers()
   headers.set('Content-Type', 'application/json')

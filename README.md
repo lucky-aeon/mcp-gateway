@@ -65,7 +65,7 @@ The gateway reads `config.json` from the config directory (defaults to `./vm` wh
         "RequiredScopes": ["mcp:read"],
         "ScopesSupported": ["mcp:read"]
     },
-    "GatewayProtocol": "streamhttp",
+    "GatewayProtocol": "all",
     "McpServiceMgrConfig": {
         "McpServiceRetryCount": 3
     }
@@ -77,7 +77,7 @@ Key fields:
 | Field                                   | Default       | Description                                                                        |
 | --------------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
 | `Bind`                                  | `[::]:8080`   | Server listen address.                                                             |
-| `GatewayProtocol`                       | `sse`         | Transport protocol: `sse` or `streamhttp`. Also overridable via `--protocol` flag. |
+| `GatewayProtocol`                       | `all`         | Exposed gateway protocols: `all`, `sse`, or `streamhttp`. Also overridable via `--protocol` flag. |
 | `Auth.Enabled`                          | `true`        | Whether to enforce authentication. Set `false` for local unauthenticated MCP use.   |
 | `Auth.ApiKey`                           | `123456`      | Legacy single-key management API login token; not used as MCP auth.                |
 | `Auth.Mode`                             | `single-key`  | `single-key` or `saas`. SaaS mode uses MCP Gateway accounts and password login.      |
@@ -97,7 +97,7 @@ Key fields:
 Either set `GatewayProtocol` in `config.json`:
 
 ```json
-{ "GatewayProtocol": "streamhttp" }
+{ "GatewayProtocol": "all" }
 ```
 
 Or pass the CLI flag (takes precedence):
@@ -106,7 +106,7 @@ Or pass the CLI flag (takes precedence):
 ./mcp-gateway --protocol=streamhttp
 ```
 
-Valid values: `sse` (default) or `streamhttp`.
+Valid values: `all` (default), `sse`, or `streamhttp`.
 
 ## Authentication
 
@@ -173,7 +173,7 @@ Content-Type: application/json
 
 ### Use MCP (SSE Mode)
 
-> Available when `GatewayProtocol` is `sse` (default).
+> Available when `GatewayProtocol` is `all` (default) or `sse`.
 
 #### GET SSE
 
@@ -204,7 +204,7 @@ Content-Type: application/json
 
 ### Use Gateway (SSE Mode)
 
-> Available when `GatewayProtocol` is `sse` (default).
+> Available when `GatewayProtocol` is `all` (default) or `sse`.
 
 网关和直连MCP的区别在于，只需要与网关交互，网关会自动将请求转发到对应的MCP服务器。在call 时，需要在method前面添加 `mcpServerName` 内容，标识该请求来自哪个 MCP 服务器。
 
@@ -310,7 +310,7 @@ Content-Type: application/json
 
 ### Use Gateway (Streamable HTTP Mode)
 
-> Available when `GatewayProtocol` is `streamhttp` (set via config or `--protocol=streamhttp`).
+> Available when `GatewayProtocol` is `all` (default) or `streamhttp`.
 >
 > Implements the MCP Streamable HTTP transport defined in spec `2025-03-26`. The gateway exposes a single aggregated endpoint `/stream` that accepts `POST`, `GET` and `DELETE`. Session identifiers are carried in the `Mcp-Session-Id` HTTP header.
 

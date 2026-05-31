@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"net/http"
 	"sync"
 
 	"github.com/labstack/echo/v4"
@@ -14,20 +15,20 @@ import (
 // 它本身不持有业务状态，所有调用都委托给底层 workspaces.ServiceManagerI。
 type Handler struct {
 	services  workspaces.ServiceManagerI
-	cfg       config.Config
+	cfg       *config.Config
 	auth      *identity.Service
 	oauth     *internalOAuthServer
 	restoreMu sync.Mutex
 }
 
 // NewHandler 构造一个 gateway Handler。
-func NewHandler(services workspaces.ServiceManagerI, cfg config.Config, auth *identity.Service) *Handler {
+func NewHandler(services workspaces.ServiceManagerI, cfg *config.Config, auth *identity.Service) *Handler {
 	return &Handler{services: services, cfg: cfg, auth: auth, oauth: newInternalOAuthServer()}
 }
 
 // Register 向 Echo 注册 MCP 协议入口：
-//   - Streamable HTTP 模式: POST/GET/DELETE /stream, GET/POST /:service
-//   - SSE 模式:           GET /sse, POST /message
+//   - Streamable HTTP: POST/GET/DELETE /stream, GET/POST /:service
+//   - SSE:             GET /sse, POST /message
 //
 // proxyHandler 是 wildcard 路由（/*），需要通过 RegisterProxy 单独注册在所有其它路由之后。
 func (h *Handler) Register(e *echo.Echo) {
@@ -40,20 +41,44 @@ func (h *Handler) Register(e *echo.Echo) {
 	e.POST("/oauth/register", h.handleOAuthRegister)
 	e.POST("/oauth/token", h.handleOAuthToken)
 
-	if h.cfg.IsStreamHTTP() {
-		e.GET("/:service", auth(h.handleStreamHTTP))
-		e.POST("/:service", auth(h.handleStreamHTTP))
-		e.POST("/stream", auth(h.handleGlobalStreamHTTP))
-		e.GET("/stream", auth(h.handleGlobalStreamHTTP))
-		e.DELETE("/stream", auth(h.handleGlobalStreamHTTP))
-	} else {
-		e.GET("/sse", auth(h.handleGlobalSSE))
-		e.POST("/message", auth(h.handleGlobalMessage))
-	}
+	e.GET("/sse", auth(h.requireSSE(h.handleGlobalSSE)))
+	e.POST("/message", auth(h.requireSSE(h.handleGlobalMessage)))
+	e.POST("/stream", auth(h.requireStreamHTTP(h.handleGlobalStreamHTTP)))
+	e.GET("/stream", auth(h.requireStreamHTTP(h.handleGlobalStreamHTTP)))
+	e.DELETE("/stream", auth(h.requireStreamHTTP(h.handleGlobalStreamHTTP)))
+	e.GET("/:service", auth(h.requireStreamHTTPOrProxy(h.handleStreamHTTP)))
+	e.POST("/:service", auth(h.requireStreamHTTPOrProxy(h.handleStreamHTTP)))
 }
 
 // RegisterProxy 注册通配 /* 代理路由，必须在所有其它路由之后调用。
 func (h *Handler) RegisterProxy(e *echo.Echo) {
 	auth := h.mcpAuthMiddleware
 	e.Any("/*", auth(h.proxyHandler()))
+}
+
+func (h *Handler) requireSSE(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if h.cfg == nil || !h.cfg.SupportsSSE() {
+			return echo.NewHTTPError(http.StatusNotFound)
+		}
+		return next(c)
+	}
+}
+
+func (h *Handler) requireStreamHTTP(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if h.cfg == nil || !h.cfg.SupportsStreamHTTP() {
+			return echo.NewHTTPError(http.StatusNotFound)
+		}
+		return next(c)
+	}
+}
+
+func (h *Handler) requireStreamHTTPOrProxy(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if h.cfg == nil || !h.cfg.SupportsStreamHTTP() {
+			return h.proxyHandler()(c)
+		}
+		return next(c)
+	}
 }

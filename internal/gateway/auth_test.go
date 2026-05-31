@@ -51,7 +51,7 @@ func newOAuthAuthTestHandler(t *testing.T) (*Handler, string) {
 	require.NoError(t, err)
 
 	return &Handler{
-		cfg: config.Config{
+		cfg: &config.Config{
 			Auth: &config.AuthConfig{
 				Enabled:              true,
 				AuthorizationServers: []string{"https://auth.example.com"},
@@ -118,7 +118,7 @@ func TestMCPAuthAcceptsIntrospectedOpaqueToken(t *testing.T) {
 	t.Cleanup(introspection.Close)
 
 	h := &Handler{
-		cfg: config.Config{
+		cfg: &config.Config{
 			Auth: &config.AuthConfig{
 				Enabled:                  true,
 				AuthorizationServers:     []string{"https://auth.example.com"},
@@ -167,7 +167,7 @@ func TestProtectedResourceMetadata(t *testing.T) {
 
 func TestProtectedResourceMetadataUsesGatewayAsAuthorizationServerInSaaSMode(t *testing.T) {
 	h := &Handler{
-		cfg: config.Config{
+		cfg: &config.Config{
 			Auth: &config.AuthConfig{
 				Enabled: true,
 				Mode:    "saas",
@@ -193,7 +193,7 @@ func TestProtectedResourceMetadataUsesGatewayAsAuthorizationServerInSaaSMode(t *
 
 func TestAuthorizationServerMetadataForInternalSaaSAuth(t *testing.T) {
 	h := &Handler{
-		cfg: config.Config{
+		cfg: &config.Config{
 			Auth: &config.AuthConfig{
 				Enabled: true,
 				Mode:    "saas",
@@ -223,7 +223,7 @@ func TestAuthorizationServerMetadataForInternalSaaSAuth(t *testing.T) {
 
 func TestMCPAuthRejectsInvalidTokenWithoutAuthorizationServerConfig(t *testing.T) {
 	h := &Handler{
-		cfg: config.Config{
+		cfg: &config.Config{
 			Auth: &config.AuthConfig{Enabled: true},
 		},
 	}

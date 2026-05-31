@@ -145,7 +145,7 @@ func TestOAuthTokenPasswordGrantUsesGatewayAccountPassword(t *testing.T) {
 		},
 	}
 	h := &Handler{
-		cfg:  *cfg,
+		cfg:  cfg,
 		auth: identity.NewService(cfg, store),
 	}
 
@@ -176,7 +176,7 @@ func TestOAuthTokenPasswordGrantUsesGatewayAccountPassword(t *testing.T) {
 
 func TestOAuthDynamicClientRegistration(t *testing.T) {
 	h := &Handler{
-		cfg: config.Config{
+		cfg: &config.Config{
 			Auth: &config.AuthConfig{
 				Enabled: true,
 				Mode:    "saas",
@@ -223,7 +223,7 @@ func TestOAuthAuthorizationCodeGrantUsesGatewayAccountPassword(t *testing.T) {
 		},
 	}
 	h := &Handler{
-		cfg:  *cfg,
+		cfg:  cfg,
 		auth: identity.NewService(cfg, store),
 	}
 
@@ -306,7 +306,7 @@ func TestOAuthAuthorizationCodeGrantUsesGatewayAPIKey(t *testing.T) {
 		},
 	}
 	h := &Handler{
-		cfg:  *cfg,
+		cfg:  cfg,
 		auth: identity.NewService(cfg, store),
 	}
 

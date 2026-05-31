@@ -78,7 +78,7 @@ func createTestServerManager() (*Handler, *MockServiceManager) {
 	mockMgr := &MockServiceManager{}
 	h := &Handler{
 		services: mockMgr,
-		cfg: config.Config{
+		cfg: &config.Config{
 			GatewayProtocol: "streamhttp",
 		},
 	}

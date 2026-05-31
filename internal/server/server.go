@@ -51,7 +51,7 @@ func New(cfg config.Config, e *echo.Echo) *Server {
 	}
 
 	adminH := admin.NewHandler(services, &cfg, authSvc)
-	gatewayH := gateway.NewHandler(services, cfg, authSvc)
+	gatewayH := gateway.NewHandler(services, &cfg, authSvc)
 
 	// 先注册精确匹配的路由
 	adminH.Register(e)

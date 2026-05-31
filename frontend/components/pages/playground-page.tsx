@@ -47,6 +47,8 @@ interface ToolCall {
   timestamp: string
 }
 
+const gatewayMessageProtocol = (protocol?: MetaInfo['gateway_protocol']) => protocol === 'streamhttp' ? 'streamhttp' : 'sse'
+
 const exampleCalls = [
   {
     id: 'ex-1',
@@ -132,7 +134,7 @@ export function PlaygroundPage() {
       const result = await callGatewayMessage({
         sessionId: selectedSession || undefined,
         body,
-        protocol: meta?.gateway_protocol || 'sse',
+        protocol: gatewayMessageProtocol(meta?.gateway_protocol),
       })
       setResponseText(result.text)
       setHistory((prev) =>

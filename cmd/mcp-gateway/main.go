@@ -25,7 +25,7 @@ import (
 func main() {
 	var protocolFlag, cfgPath string
 	var assumeYes bool
-	flag.StringVar(&protocolFlag, "protocol", "", "Gateway protocol: sse or streamhttp")
+	flag.StringVar(&protocolFlag, "protocol", "", "Gateway protocol: all, sse or streamhttp")
 	flag.StringVar(&cfgPath, "cfg", "./config.json", "Path to the configuration file")
 	flag.BoolVar(&assumeYes, "yes", false, "Assume yes to all prompts (e.g. auto-create missing workspace directory)")
 	flag.Parse()
@@ -35,7 +35,8 @@ func main() {
 		panic(fmt.Errorf("failed to init config: %w", err))
 	}
 	if protocolFlag != "" {
-		cfg.GatewayProtocol = protocolFlag
+		cfg.GatewayProtocol = strings.ToLower(strings.TrimSpace(protocolFlag))
+		cfg.Default()
 	}
 
 	// 确保 WorkspacePath 存在；不存在则询问用户是否创建

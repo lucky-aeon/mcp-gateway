@@ -1550,7 +1550,7 @@ func (h *Handler) handleV1InstallMarketPackage(c echo.Context) error {
 	if req.Args != nil {
 		cfg.Args = append([]string(nil), req.Args...)
 	}
-	cfg.GatewayProtocol = h.cfg.GatewayProtocol
+	cfg.GatewayProtocol = downstreamGatewayProtocol(h.cfg.GatewayProtocol)
 	configSnapshot := serviceConfigToMap(cfg)
 	if auth := marketInstallOptionAuth(*pkg, req.InstallOptionIndex); auth != nil {
 		copyInstalledAuthState(configSnapshot, &installedAuthState{
@@ -2050,8 +2050,8 @@ func (h *Handler) handleV1UpdateSystemConfig(c echo.Context) error {
 	if req.Bind != nil {
 		h.cfg.Bind = *req.Bind
 	}
-	if req.GatewayProtocol != nil && (*req.GatewayProtocol == "sse" || *req.GatewayProtocol == "streamhttp") {
-		h.cfg.GatewayProtocol = *req.GatewayProtocol
+	if req.GatewayProtocol != nil && isGatewayExposureProtocol(*req.GatewayProtocol) {
+		h.cfg.GatewayProtocol = strings.ToLower(strings.TrimSpace(*req.GatewayProtocol))
 	}
 	if req.SessionGCIntervalSeconds != nil {
 		h.cfg.SessionGCInterval = time.Duration(*req.SessionGCIntervalSeconds) * time.Second
@@ -2321,10 +2321,35 @@ func (h *Handler) parseServiceRequest(ctx context.Context, workspaceID string, r
 
 func asGatewayProtocol(v interface{}) string {
 	protocol := strings.ToLower(strings.TrimSpace(asString(v)))
-	if protocol == "sse" || protocol == "streamhttp" {
+	if isServiceGatewayProtocol(protocol) {
 		return protocol
 	}
 	return ""
+}
+
+func isGatewayExposureProtocol(protocol string) bool {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "all", "sse", "streamhttp":
+		return true
+	default:
+		return false
+	}
+}
+
+func isServiceGatewayProtocol(protocol string) bool {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "sse", "streamhttp":
+		return true
+	default:
+		return false
+	}
+}
+
+func downstreamGatewayProtocol(protocol string) string {
+	if strings.ToLower(strings.TrimSpace(protocol)) == "streamhttp" {
+		return "streamhttp"
+	}
+	return "sse"
 }
 
 func (h *Handler) applyRequestOAuth(ctx context.Context, v interface{}, cfg *config.MCPServerConfig) error {

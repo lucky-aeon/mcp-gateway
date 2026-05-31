@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -16,7 +17,7 @@ type Config struct {
 	SessionGCInterval   time.Duration // Session GC间隔
 	ProxySessionTimeout time.Duration // Proxy Session 超时时间
 	McpServiceMgrConfig McpServiceMgrConfig
-	GatewayProtocol     string // 新增: "sse" | "streamhttp"
+	GatewayProtocol     string // "all" | "sse" | "streamhttp"
 
 	cfgPath string `json:"-"` // 加载时使用的配置文件路径，SaveConfig 将回写到此
 }
@@ -99,16 +100,41 @@ func (c *Config) Default() {
 	if c.McpServiceMgrConfig.McpServiceRetryCount == 0 {
 		c.McpServiceMgrConfig.McpServiceRetryCount = 3
 	}
-	if c.GatewayProtocol == "" {
-		c.GatewayProtocol = "sse" // 默认 SSE
-	}
+	c.GatewayProtocol = normalizeGatewayExposureProtocol(c.GatewayProtocol)
 	if c.WorkspacePath == "" {
 		c.WorkspacePath = "./vm" // 默认在当前运行目录下的 vm 目录
 	}
 }
 
 func (c *Config) IsStreamHTTP() bool {
-	return c.GatewayProtocol == "streamhttp"
+	return normalizeGatewayExposureProtocol(c.GatewayProtocol) == "streamhttp"
+}
+
+func (c *Config) SupportsSSE() bool {
+	protocol := normalizeGatewayExposureProtocol(c.GatewayProtocol)
+	return protocol == "all" || protocol == "sse"
+}
+
+func (c *Config) SupportsStreamHTTP() bool {
+	protocol := normalizeGatewayExposureProtocol(c.GatewayProtocol)
+	return protocol == "all" || protocol == "streamhttp"
+}
+
+func normalizeGatewayExposureProtocol(protocol string) string {
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	if !isGatewayExposureProtocol(protocol) {
+		return "all"
+	}
+	return protocol
+}
+
+func isGatewayExposureProtocol(protocol string) bool {
+	switch protocol {
+	case "all", "sse", "streamhttp":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Config) GetAuthConfig() *AuthConfig {

@@ -26,7 +26,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
-import { gatewayApi, invalidate, useGatewaySWR, type ListData, type MarketPackage, type MarketPackageInput, type MarketSource, type SystemConfig } from '@/lib/gateway-api'
+import { gatewayApi, invalidate, useGatewaySWR, type GatewayExposureProtocol, type ListData, type MarketPackage, type MarketPackageInput, type MarketSource, type SystemConfig } from '@/lib/gateway-api'
 import { useTheme } from '@/components/providers/theme-provider'
 import { cn } from '@/lib/utils'
 import { runAction } from '@/lib/action-feedback'
@@ -298,9 +298,10 @@ export function SetupPage() {
               </div>
               <div className="space-y-2">
                 <Label>网关协议</Label>
-                <Select value={form.gateway_protocol} onValueChange={(value: 'sse' | 'streamhttp') => setForm((v) => v ? { ...v, gateway_protocol: value } : v)}>
+                <Select value={form.gateway_protocol} onValueChange={(value: GatewayExposureProtocol) => setForm((v) => v ? { ...v, gateway_protocol: value } : v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="all">SSE + Streamable HTTP</SelectItem>
                     <SelectItem value="sse">SSE</SelectItem>
                     <SelectItem value="streamhttp">Streamable HTTP</SelectItem>
                   </SelectContent>
