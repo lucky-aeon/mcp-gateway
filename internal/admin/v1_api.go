@@ -292,7 +292,7 @@ func (h *Handler) handleV1Meta(c echo.Context) error {
 		"version":          "v1",
 		"login_methods": func() []string {
 			if h.authMode() == "saas" {
-				return []string{"password"}
+				return []string{"password", "api_key"}
 			}
 			return []string{"api_key"}
 		}(),
@@ -325,6 +325,26 @@ func (h *Handler) handleV1AuthLogin(c echo.Context) error {
 			"user":       h.currentUser(),
 		})
 	default:
+		if strings.TrimSpace(req.APIKey) != "" {
+			principal, err := h.auth.ValidateBearer(c.Request().Context(), req.APIKey)
+			if err != nil {
+				return respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid api key", nil)
+			}
+			h.auth.AppendAuditLog(c.Request().Context(), principal, "auth.login", "api_key", "", principal.WorkspaceID, map[string]interface{}{"mode": "saas"})
+			return respondOK(c, map[string]interface{}{
+				"mode":       h.authMode(),
+				"token_type": "Bearer",
+				"token":      req.APIKey,
+				"user": map[string]interface{}{
+					"id":           principal.AccountID,
+					"email":        principal.Email,
+					"display_name": principal.DisplayName,
+					"role":         principal.Role,
+					"status":       "active",
+					"builtin":      false,
+				},
+			})
+		}
 		if strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Password) == "" {
 			return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "email and password are required", nil)
 		}

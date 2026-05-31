@@ -373,20 +373,19 @@ func (s *Session) SendEvent(event SessionMsg) {
 	xl := xlog.NewLogger("session-" + s.Id)
 	xl.Infof("Sending event: %s, data: %s", event.Event, event.Data)
 
-	// 优化：一次性获取需要的数据，减少锁持有时间
 	s.mu.RLock()
 	isDuplicate := s.lastMsg.isDuplicate(&event)
-	eventChans := make([]chan SessionMsg, len(s.eventChans))
-	copy(eventChans, s.eventChans)
-	s.mu.RUnlock()
-
 	if isDuplicate {
+		s.mu.RUnlock()
 		xl.Debugf("Event already sent: %s", event.Event)
 		return
 	}
 
-	// 优化：并发发送事件到所有通道
-	sentToChannels := s.broadcastEvent(eventChans, event, xl)
+	// Keep the read lock while sending so Close/remove cannot close a channel
+	// between selecting it and sending to it.
+	totalChannels := len(s.eventChans)
+	sentToChannels := s.broadcastEvent(s.eventChans, event, xl)
+	s.mu.RUnlock()
 
 	// 只在成功发送后更新状态
 	if sentToChannels > 0 {
@@ -396,7 +395,7 @@ func (s *Session) SendEvent(event SessionMsg) {
 		s.mu.Unlock()
 		xl.Infof("Event sent to %d channels", sentToChannels)
 	} else {
-		xl.Warnf("Event not sent to any channels (total channels: %d)", len(eventChans))
+		xl.Warnf("Event not sent to any channels (total channels: %d)", totalChannels)
 	}
 }
 
@@ -435,8 +434,8 @@ func (s *Session) GetEventChanWithCloser() (<-chan SessionMsg, func()) {
 	s.eventChans = append(s.eventChans, curChan)
 
 	closer := func() {
-		close(curChan)
-		// 关闭后立即从列表中移除
+		// Per-request channels are owned by the session. Removing the channel is
+		// enough for this connection; Session.Close owns closing remaining chans.
 		s.removeEventChan(curChan)
 	}
 

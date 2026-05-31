@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 
 type memoryIdentityStore struct {
 	account      *identity.Account
+	apiKey       *identity.APIKey
 	refreshToken *identity.RefreshToken
 }
 
@@ -95,7 +97,10 @@ func (s *memoryIdentityStore) CreateAPIKey(context.Context, *identity.APIKey) er
 func (s *memoryIdentityStore) ListAPIKeysByAccount(context.Context, string) ([]identity.APIKey, error) {
 	return nil, nil
 }
-func (s *memoryIdentityStore) FindAPIKeyByHash(context.Context, string) (*identity.APIKey, error) {
+func (s *memoryIdentityStore) FindAPIKeyByHash(_ context.Context, keyHash string) (*identity.APIKey, error) {
+	if s.apiKey != nil && s.apiKey.KeyHash == keyHash {
+		return s.apiKey, nil
+	}
 	return nil, errors.New("not found")
 }
 func (s *memoryIdentityStore) UpdateAPIKeyUsage(context.Context, string, time.Time) error { return nil }
@@ -269,4 +274,72 @@ func TestOAuthAuthorizationCodeGrantUsesGatewayAccountPassword(t *testing.T) {
 	assert.NoError(t, json.NewDecoder(strings.NewReader(tokenRec.Body.String())).Decode(&resp))
 	assert.NotEmpty(t, resp["access_token"])
 	assert.Equal(t, "Bearer", resp["token_type"])
+}
+
+func TestOAuthAuthorizationCodeGrantUsesGatewayAPIKey(t *testing.T) {
+	rawAPIKey := "gk_test_oauth_login"
+	hash, err := identity.HashPassword("secret123")
+	require.NoError(t, err)
+	store := &memoryIdentityStore{
+		account: &identity.Account{
+			ID:            "account-1",
+			Email:         "user@example.com",
+			PasswordHash:  hash,
+			DisplayName:   "User",
+			Status:        "active",
+			IsSystemAdmin: true,
+		},
+		apiKey: &identity.APIKey{
+			ID:        "key-1",
+			AccountID: "account-1",
+			KeyHash:   testHashToken(rawAPIKey),
+			Status:    "active",
+		},
+	}
+	cfg := &config.Config{
+		Auth: &config.AuthConfig{
+			Enabled:               true,
+			Mode:                  "saas",
+			JWTSecret:             "test-secret",
+			AccessTokenTTLMinutes: 120,
+			RefreshTokenTTLHours:  720,
+		},
+	}
+	h := &Handler{
+		cfg:  *cfg,
+		auth: identity.NewService(cfg, store),
+	}
+
+	verifier := "verifier-123"
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	form := url.Values{}
+	form.Set("response_type", "code")
+	form.Set("client_id", "test-client")
+	form.Set("redirect_uri", "http://client.example/callback")
+	form.Set("state", "state-1")
+	form.Set("code_challenge", challenge)
+	form.Set("code_challenge_method", "S256")
+	form.Set("auth_method", "api_key")
+	form.Set("api_key", rawAPIKey)
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	err = h.handleOAuthAuthorize(echo.New().NewContext(req, rec))
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, rec.Code)
+	location := rec.Header().Get(echo.HeaderLocation)
+	require.NotEmpty(t, location)
+	redirected, err := url.Parse(location)
+	require.NoError(t, err)
+	assert.NotEmpty(t, redirected.Query().Get("code"))
+	assert.Equal(t, "state-1", redirected.Query().Get("state"))
+}
+
+func testHashToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }

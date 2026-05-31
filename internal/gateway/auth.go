@@ -187,7 +187,7 @@ func (h *Handler) handleOAuthAuthorize(c echo.Context) error {
 	}
 	principal, err := h.authenticateOAuthLogin(c)
 	if err != nil {
-		return h.renderOAuthLogin(c, "Invalid email or password")
+		return h.renderOAuthLogin(c, "Invalid account credentials or API key")
 	}
 	redirectURI := c.FormValue("redirect_uri")
 	if strings.TrimSpace(redirectURI) == "" {
@@ -266,6 +266,9 @@ func (h *Handler) handleOAuthToken(c echo.Context) error {
 }
 
 func (h *Handler) authenticateOAuthLogin(c echo.Context) (*identity.Principal, error) {
+	if c.FormValue("auth_method") == "api_key" {
+		return h.auth.ValidateBearer(c.Request().Context(), c.FormValue("api_key"))
+	}
 	resp, err := h.auth.AuthenticatePassword(c.Request().Context(), c.FormValue("username"), c.FormValue("password"))
 	if err != nil {
 		return nil, err
@@ -297,7 +300,7 @@ func oauthLoginHTML(form url.Values, message string) string {
 	if message != "" {
 		errorHTML = `<p class="error">` + html.EscapeString(message) + `</p>`
 	}
-	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MCP Gateway Login</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f9;margin:0;display:grid;place-items:center;min-height:100vh;color:#1f2933}.box{width:min(360px,calc(100vw - 32px));background:#fff;border:1px solid #d9dee7;border-radius:8px;padding:24px;box-shadow:0 10px 30px rgba(15,23,42,.08)}h1{font-size:20px;margin:0 0 18px}label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}input{box-sizing:border-box;width:100%;height:40px;border:1px solid #c7ceda;border-radius:6px;padding:0 10px;font-size:14px}button{margin-top:18px;width:100%;height:40px;border:0;border-radius:6px;background:#1f2937;color:#fff;font-weight:700}.error{margin:0 0 12px;color:#b42318;font-size:14px}</style></head><body><form class="box" method="post" action="/oauth/authorize"><h1>MCP Gateway Login</h1>` + errorHTML + fields.String() + `<label>Email</label><input name="username" type="email" autocomplete="username" required autofocus><label>Password</label><input name="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form></body></html>`
+	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MCP Gateway Login</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f9;margin:0;display:grid;place-items:center;min-height:100vh;color:#1f2933}.box{width:min(380px,calc(100vw - 32px));background:#fff;border:1px solid #d9dee7;border-radius:8px;padding:24px;box-shadow:0 10px 30px rgba(15,23,42,.08)}h1{font-size:20px;margin:0 0 18px}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}.tabs label{display:flex;align-items:center;justify-content:center;height:36px;margin:0;border:1px solid #c7ceda;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer}.tabs input{position:absolute;opacity:0;width:1px;height:1px}.tabs label:has(input:checked){background:#1f2937;border-color:#1f2937;color:#fff}.field-label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}input[type=email],input[type=password],input[name=api_key]{box-sizing:border-box;width:100%;height:40px;border:1px solid #c7ceda;border-radius:6px;padding:0 10px;font-size:14px}button{margin-top:18px;width:100%;height:40px;border:0;border-radius:6px;background:#1f2937;color:#fff;font-weight:700}.error{margin:0 0 12px;color:#b42318;font-size:14px}.method{display:none}.method.active{display:block}</style></head><body><form class="box" method="post" action="/oauth/authorize"><h1>MCP Gateway Login</h1>` + errorHTML + fields.String() + `<div class="tabs"><label><input type="radio" name="auth_method" value="password" checked>Account</label><label><input type="radio" name="auth_method" value="api_key">API Key</label></div><div class="method active" data-method="password"><label class="field-label">Email</label><input name="username" type="email" autocomplete="username" autofocus><label class="field-label">Password</label><input name="password" type="password" autocomplete="current-password"></div><div class="method" data-method="api_key"><label class="field-label">API Key</label><input name="api_key" type="password" autocomplete="off"></div><button type="submit">Sign in</button></form><script>const form=document.querySelector("form");const radios=[...document.querySelectorAll("input[name=auth_method]")];const sync=()=>{const method=document.querySelector("input[name=auth_method]:checked").value;document.querySelectorAll(".method").forEach(el=>el.classList.toggle("active",el.dataset.method===method));form.username.required=method==="password";form.password.required=method==="password";form.api_key.required=method==="api_key";if(method==="api_key")form.api_key.focus();else form.username.focus()};radios.forEach(r=>r.addEventListener("change",sync));sync();</script></body></html>`
 }
 
 func oauthTokenResponse(resp map[string]interface{}) map[string]interface{} {

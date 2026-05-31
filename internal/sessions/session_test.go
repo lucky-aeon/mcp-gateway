@@ -253,6 +253,29 @@ func TestSessionNoImmediateCleanupAfterLastChannelClosed(t *testing.T) {
 	}
 }
 
+func TestSessionEventChannelCloserOnlyUnsubscribes(t *testing.T) {
+	session := NewSession("unsubscribe-only")
+	defer session.Close()
+
+	eventChan, closeChan := session.GetEventChanWithCloser()
+	closeChan()
+
+	select {
+	case _, ok := <-eventChan:
+		if !ok {
+			t.Fatalf("expected closeChan to unsubscribe without closing the event channel")
+		}
+	default:
+	}
+
+	session.SendEvent(SessionMsg{Event: "message", Data: `{"ok":true}`})
+	select {
+	case event := <-eventChan:
+		t.Fatalf("expected unsubscribed channel not to receive events, got: %s", event.Data)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestSessionCleanupAfterNoConnectionTTL(t *testing.T) {
 	session := NewSession("cleanup-after-ttl")
 	defer session.Close()

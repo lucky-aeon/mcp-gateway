@@ -18,6 +18,7 @@ export default function LoginPage() {
   const [metaLoading, setMetaLoading] = useState(true)
   const [mode, setMode] = useState<'single-key' | 'saas'>('single-key')
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [loginMethod, setLoginMethod] = useState<'password' | 'api_key'>('password')
   const [allowRegister, setAllowRegister] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -77,7 +78,7 @@ export default function LoginPage() {
       }
 
       let result
-      if (mode === 'single-key') {
+      if (mode === 'single-key' || loginMethod === 'api_key') {
         result = await gatewayApi.login({ api_key: apiKey })
         saveGatewayApiKey(result.token || apiKey, rememberMe)
       } else {
@@ -103,7 +104,14 @@ export default function LoginPage() {
 
   const toggleAuthMode = () => {
     setAuthMode(authMode === 'login' ? 'register' : 'login')
+    setLoginMethod('password')
     setError('')
+  }
+
+  const submitOnEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || isLoading) return
+    e.preventDefault()
+    e.currentTarget.form?.requestSubmit()
   }
 
   const features = [
@@ -180,7 +188,9 @@ export default function LoginPage() {
                 ? '当前实例为 single-key 模式，请输入 API Key 访问管理控制台'
                 : authMode === 'register'
                   ? '注册新账户以访问管理控制台'
-                  : '登录您的账户以访问管理控制台'}
+                  : loginMethod === 'api_key'
+                    ? '输入 API Key 访问管理控制台'
+                    : '登录您的账户以访问管理控制台'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -197,7 +207,28 @@ export default function LoginPage() {
                 </div>
               )}
 
-              {mode === 'single-key' ? (
+              {mode === 'saas' && authMode === 'login' && (
+                <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
+                  <Button
+                    type="button"
+                    variant={loginMethod === 'password' ? 'secondary' : 'ghost'}
+                    className="h-9"
+                    onClick={() => setLoginMethod('password')}
+                  >
+                    账号密码
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={loginMethod === 'api_key' ? 'secondary' : 'ghost'}
+                    className="h-9"
+                    onClick={() => setLoginMethod('api_key')}
+                  >
+                    API Key
+                  </Button>
+                </div>
+              )}
+
+              {mode === 'single-key' || loginMethod === 'api_key' ? (
                 <div className="space-y-2">
                   <Label htmlFor="api-key">API Key</Label>
                   <div className="relative">
@@ -208,6 +239,7 @@ export default function LoginPage() {
                       placeholder="输入 Gateway API Key"
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
+                      onKeyDown={submitOnEnter}
                       required
                       autoComplete="off"
                       className="h-11 pl-9"
@@ -248,7 +280,7 @@ export default function LoginPage() {
                     <div className="flex items-center justify-between">
                       <Label htmlFor="password">密码</Label>
                       {authMode === 'login' && (
-                        <Button variant="link" className="h-auto p-0 text-sm text-muted-foreground">
+                        <Button type="button" variant="link" className="h-auto p-0 text-sm text-muted-foreground">
                           忘记密码？
                         </Button>
                       )}
@@ -259,6 +291,7 @@ export default function LoginPage() {
                       placeholder={authMode === 'register' ? '设置密码' : '输入密码'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={submitOnEnter}
                       required
                       autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
                       className="h-11"
@@ -294,14 +327,14 @@ export default function LoginPage() {
                   {authMode === 'login' ? (
                     <>
                       还没有账户？{' '}
-                      <Button variant="link" className="h-auto p-0 text-sm" onClick={toggleAuthMode}>
+                      <Button type="button" variant="link" className="h-auto p-0 text-sm" onClick={toggleAuthMode}>
                         立即注册
                       </Button>
                     </>
                   ) : (
                     <>
                       已有账户？{' '}
-                      <Button variant="link" className="h-auto p-0 text-sm" onClick={toggleAuthMode}>
+                      <Button type="button" variant="link" className="h-auto p-0 text-sm" onClick={toggleAuthMode}>
                         立即登录
                       </Button>
                     </>
