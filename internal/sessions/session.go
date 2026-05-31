@@ -13,6 +13,7 @@ import (
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -25,6 +26,8 @@ const (
 	// session 不活跃检查间隔
 	sessionInactivityCheckInterval = 10 * time.Second
 )
+
+const remoteOAuthAccessTokenEnv = "MCP_REMOTE_AUTH_ACCESS_TOKEN"
 
 type CleanupConfig struct {
 	NoConnectionTTL         time.Duration
@@ -257,8 +260,12 @@ func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPC
 }
 
 // SubscribeSSE 订阅MCP服务的SSE事件
-func (s *Session) SubscribeSSE(xl xlog.Logger, mcpName McpName, sseUrl string) error {
-	cli, err := client.NewSSEMCPClient(sseUrl)
+func (s *Session) SubscribeSSE(xl xlog.Logger, mcpName McpName, sseUrl string, headers map[string]string) error {
+	options := []transport.ClientOption{}
+	if len(headers) > 0 {
+		options = append(options, client.WithHeaders(headers))
+	}
+	cli, err := client.NewSSEMCPClient(sseUrl, options...)
 	if err != nil {
 		return fmt.Errorf("failed to create SSE client: %w", err)
 	}
@@ -266,8 +273,12 @@ func (s *Session) SubscribeSSE(xl xlog.Logger, mcpName McpName, sseUrl string) e
 }
 
 // SubscribeStreamHTTP 订阅 Streamable HTTP MCP 服务。
-func (s *Session) SubscribeStreamHTTP(xl xlog.Logger, mcpName McpName, streamURL string) error {
-	cli, err := client.NewStreamableHttpClient(streamURL)
+func (s *Session) SubscribeStreamHTTP(xl xlog.Logger, mcpName McpName, streamURL string, headers map[string]string) error {
+	options := []transport.StreamableHTTPCOption{}
+	if len(headers) > 0 {
+		options = append(options, transport.WithHTTPHeaders(headers))
+	}
+	cli, err := client.NewStreamableHttpClient(streamURL, options...)
 	if err != nil {
 		return fmt.Errorf("failed to create Streamable HTTP client: %w", err)
 	}

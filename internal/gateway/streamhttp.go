@@ -56,6 +56,9 @@ func (h *Handler) handleStreamHTTP(c echo.Context) error {
 	for k, v := range c.Request().Header {
 		req.Header[k] = v
 	}
+	if token := downstreamOAuthToken(instance); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -79,6 +80,39 @@ func TestServiceConfigFromMapAcceptsMongoPrimitiveValues(t *testing.T) {
 	assert.Equal(t, []string{"mcp-server-time", "--local-timezone=Asia/Shanghai"}, cfg.Args)
 	assert.Equal(t, map[string]string{"TZ": "Asia/Shanghai"}, cfg.Env)
 	assert.Equal(t, "streamhttp", cfg.GatewayProtocol)
+}
+
+func TestParseServiceRequestPreservesRemoteStreamHTTPProtocol(t *testing.T) {
+	h, _ := createTestServerManager()
+	_, cfg, meta, err := h.parseServiceRequest(context.Background(), "default", map[string]interface{}{
+		"name":             "remote-stream",
+		"url":              "https://example.com/mcp",
+		"gateway_protocol": "streamhttp",
+		"auth": map[string]interface{}{
+			"type":   "oauth2",
+			"status": "authorized",
+		},
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "https://example.com/mcp", cfg.URL)
+	assert.Equal(t, "streamhttp", cfg.GatewayProtocol)
+	assert.Equal(t, "url", meta.SourceType)
+}
+
+func TestParseServiceRequestRejectsUnauthorizedOAuthRemote(t *testing.T) {
+	h, _ := createTestServerManager()
+	_, _, _, err := h.parseServiceRequest(context.Background(), "default", map[string]interface{}{
+		"name":             "remote-stream",
+		"url":              "https://example.com/mcp",
+		"gateway_protocol": "streamhttp",
+		"auth": map[string]interface{}{
+			"type":   "oauth2",
+			"status": "pending",
+		},
+	})
+
+	assert.Error(t, err)
 }
 
 func TestV1AuthMiddlewareRequiresBearer(t *testing.T) {

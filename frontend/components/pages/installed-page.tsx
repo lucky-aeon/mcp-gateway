@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react'
 import Link from '@/components/router-link'
 import {
   Calendar,
+  CheckCircle,
+  ExternalLink,
   MoreHorizontal,
   Package,
   RefreshCw,
@@ -32,8 +34,24 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { gatewayApi, invalidate, useGatewaySWR, type InstalledItem, type ListData } from '@/lib/gateway-api'
 import { runAction } from '@/lib/action-feedback'
+
+function parseEnv(value: string) {
+  const env: Record<string, string> = {}
+  value.split('\n').forEach((line) => {
+    const [key, ...valueParts] = line.split('=')
+    if (key.trim() && valueParts.length > 0) {
+      env[key.trim()] = valueParts.join('=').trim()
+    }
+  })
+  return env
+}
+
+function formatEnv(env?: Record<string, unknown>) {
+  return Object.entries(env || {}).map(([key, value]) => `${key}=${String(value)}`).join('\n')
+}
 
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString('zh-CN', {
@@ -48,6 +66,11 @@ export function InstalledPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedItem, setSelectedItem] = useState<InstalledItem | null>(null)
   const [isConfigOpen, setIsConfigOpen] = useState(false)
+  const [configDisplayName, setConfigDisplayName] = useState('')
+  const [configArgs, setConfigArgs] = useState('')
+  const [configEnv, setConfigEnv] = useState('')
+  const [savingConfig, setSavingConfig] = useState(false)
+  const [authorizingId, setAuthorizingId] = useState('')
   const [deletingId, setDeletingId] = useState('')
 
   const items = useMemo(() => {
@@ -71,7 +94,41 @@ export function InstalledPage() {
 
   function openConfig(item: InstalledItem) {
     setSelectedItem(item)
+    setConfigDisplayName(item.display_name || item.package_name)
+    setConfigArgs(((item.config_snapshot?.args as string[] | undefined) || []).join('\n'))
+    setConfigEnv(formatEnv(item.config_snapshot?.env as Record<string, unknown> | undefined))
     setIsConfigOpen(true)
+  }
+
+  async function handleSaveConfig() {
+    if (!selectedItem) return
+    setSavingConfig(true)
+    const ok = await runAction(
+      async () => {
+        await gatewayApi.updateInstalled(selectedItem.id, {
+          display_name: configDisplayName,
+          args: configArgs.split('\n').map((arg) => arg.trim()).filter(Boolean),
+          env: parseEnv(configEnv),
+        })
+        await invalidate('/api/v1/installed')
+      },
+      { successTitle: '保存成功', successDescription: '配置快照已更新', errorTitle: '保存失败' }
+    )
+    setSavingConfig(false)
+    if (ok) setIsConfigOpen(false)
+  }
+
+  async function handleCompleteOAuth(item: InstalledItem) {
+    setAuthorizingId(item.id)
+    const ok = await runAction(
+      async () => {
+        await gatewayApi.completeInstalledOAuth(item.id)
+        await invalidate('/api/v1/installed')
+      },
+      { successTitle: '鉴权已确认', successDescription: '现在可以添加到工作空间', errorTitle: '确认失败' }
+    )
+    setAuthorizingId('')
+    if (ok) setIsConfigOpen(false)
   }
 
   return (
@@ -134,6 +191,11 @@ export function InstalledPage() {
                       {item.installed_version !== item.latest_version && (
                         <Badge variant="outline">最新 v{item.latest_version}</Badge>
                       )}
+                      {item.auth?.type === 'oauth2' && (
+                        <Badge variant={item.auth.status === 'authorized' ? 'default' : 'secondary'}>
+                          {item.auth.status === 'authorized' ? 'OAuth 已授权' : 'OAuth 待授权'}
+                        </Badge>
+                      )}
                     </div>
                     <div className="mt-1 text-sm text-muted-foreground">{item.package_id}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
@@ -189,6 +251,10 @@ export function InstalledPage() {
                 <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm">{selectedItem.package_id}</div>
               </div>
               <div className="space-y-2">
+                <Label htmlFor="installed-display-name">显示名称</Label>
+                <Input id="installed-display-name" value={configDisplayName} onChange={(e) => setConfigDisplayName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
                 <Label>市场源</Label>
                 <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm">{selectedItem.source_id || 'unknown'}</div>
               </div>
@@ -201,11 +267,46 @@ export function InstalledPage() {
                 <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm">v{selectedItem.installed_version}</div>
               </div>
             </div>
+            {selectedItem.auth?.type === 'oauth2' && (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium">OAuth 2.0 鉴权 · {selectedItem.auth.status === 'authorized' ? '已授权' : '待授权'}</p>
+                    <p className="mt-1 text-muted-foreground">{selectedItem.auth.instructions || '添加到工作空间前需要完成授权。'}</p>
+                  </div>
+                  {selectedItem.auth.authorization_url && (
+                    <Button variant="outline" size="sm" onClick={() => window.open(selectedItem.auth?.authorization_url, '_blank', 'noopener,noreferrer')}>
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      打开鉴权
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="installed-args">参数</Label>
+                <Textarea id="installed-args" value={configArgs} onChange={(e) => setConfigArgs(e.target.value)} rows={5} placeholder="每行一个参数" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="installed-env">环境变量</Label>
+                <Textarea id="installed-env" value={configEnv} onChange={(e) => setConfigEnv(e.target.value)} rows={5} placeholder="KEY=VALUE，每行一个" />
+              </div>
+            </div>
             <pre className="max-h-72 overflow-auto rounded-lg border bg-muted/30 p-4 text-xs">
               {JSON.stringify(selectedItem.config_snapshot || {}, null, 2)}
             </pre>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsConfigOpen(false)}>关闭</Button>
+              {selectedItem.auth?.type === 'oauth2' && selectedItem.auth.status !== 'authorized' && (
+                <Button variant="outline" onClick={() => handleCompleteOAuth(selectedItem)} disabled={authorizingId === selectedItem.id}>
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  {authorizingId === selectedItem.id ? '确认中...' : '已完成鉴权'}
+                </Button>
+              )}
+              <Button variant="outline" onClick={handleSaveConfig} disabled={savingConfig}>
+                {savingConfig ? '保存中...' : '保存配置'}
+              </Button>
               <Button asChild>
                 <Link href="/workspaces">选择工作空间添加</Link>
               </Button>

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from '@/components/router-link'
-import { AlertCircle, ArrowLeft, CheckCircle, Clock, FileText, Filter, Layers, MoreHorizontal, Package, Play, Plus, RefreshCw, Settings, Square, Trash2, Users, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CheckCircle, Clock, ExternalLink, FileText, Filter, Layers, MoreHorizontal, Package, Play, Plus, RefreshCw, Settings, Square, Trash2, Users, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -68,14 +68,20 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
   const [serviceActionKey, setServiceActionKey] = useState('')
   const [sessionAction, setSessionAction] = useState(false)
   const [addingInstalledId, setAddingInstalledId] = useState('')
+  const [oauthAction, setOauthAction] = useState('')
+  const [serviceOAuthFlows, setServiceOAuthFlows] = useState<Record<string, { state: string; status: string; error?: string }>>({})
   const [savingSettings, setSavingSettings] = useState(false)
   const [logFilter, setLogFilter] = useState('all')
   const [settingsForm, setSettingsForm] = useState<{ name?: string; description?: string }>({})
-  const [customForm, setCustomForm] = useState<{ name: string; protocol: string; url?: string; command?: string; args: string; env: string }>({
+  const [customForm, setCustomForm] = useState<{ name: string; protocol: string; url?: string; command?: string; args: string; env: string; authEnabled: boolean; authState: string; authAuthorized: boolean; authStatus?: string; authLoading: boolean; authError?: string }>({
     name: '',
     protocol: 'sse',
     args: '',
     env: '',
+    authEnabled: false,
+    authState: '',
+    authAuthorized: false,
+    authLoading: false,
   })
 
   const { data: workspace, isLoading } = useGatewaySWR<Workspace & { mcps?: Service[] }>(`/api/v1/workspaces/${workspaceId}`)
@@ -154,6 +160,16 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
   }
 
   async function handleAddInstalledPackage(item: InstalledItem) {
+    if (item.auth?.type === 'oauth2' && item.auth.status !== 'authorized') {
+      if (item.auth.authorization_url) {
+        window.open(item.auth.authorization_url, '_blank', 'noopener,noreferrer')
+      }
+      toast({
+        title: '需要先完成 OAuth 鉴权',
+        description: '新标签页完成授权后，请回到已安装 MCP 页面确认鉴权完成。',
+      })
+      return
+    }
     setAddingInstalledId(item.id)
     const ok = await runAction(
       async () => {
@@ -179,6 +195,20 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
       if (customForm.url) {
         body.url = customForm.url
       }
+      if (customForm.authEnabled) {
+        if (!customForm.authAuthorized) {
+          toast({
+            variant: 'destructive',
+            title: '需要先完成 OAuth 鉴权',
+            description: '请先点击自动获取鉴权并完成授权，再部署到工作空间。',
+          })
+          return
+        }
+        body.auth = {
+          type: 'oauth2',
+          state: customForm.authState,
+        }
+      }
       if (customForm.command) {
         body.command = customForm.command
       }
@@ -197,7 +227,7 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
       }
       await gatewayApi.createService(workspaceId, body)
       setIsCustomOpen(false)
-      setCustomForm({ name: '', protocol: 'sse', args: '', env: '' })
+      setCustomForm({ name: '', protocol: 'sse', args: '', env: '', authEnabled: false, authState: '', authAuthorized: false, authLoading: false })
       await refreshWorkspace()
       toast({
         title: '部署成功',
@@ -220,6 +250,70 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function handleStartCustomOAuth() {
+    if (!customForm.url) return
+    setCustomForm((v) => ({ ...v, authLoading: true, authError: undefined, authStatus: 'discovering', authAuthorized: false }))
+    await runAction(
+      async () => {
+        const flow = await gatewayApi.startMCPOAuth({ resource_url: customForm.url || '' })
+        setCustomForm((v) => ({ ...v, authState: flow.state, authStatus: flow.status, authAuthorized: flow.status === 'authorized', authLoading: false }))
+        window.open(flow.authorization_url, '_blank', 'noopener,noreferrer')
+      },
+      { successTitle: '已打开鉴权页面', successDescription: '完成授权后回到此页面检查状态', errorTitle: 'OAuth 发现失败' }
+    )
+    setCustomForm((v) => v.authLoading ? { ...v, authLoading: false, authStatus: 'failed', authError: 'OAuth 发现失败' } : v)
+  }
+
+  async function handleCheckCustomOAuth() {
+    if (!customForm.authState) return
+    await runAction(
+      async () => {
+        const status = await gatewayApi.getMCPOAuthStatus(customForm.authState)
+        setCustomForm((v) => ({ ...v, authStatus: status.status, authAuthorized: status.status === 'authorized', authError: status.error }))
+        if (status.status !== 'authorized') {
+          throw new Error(status.error || 'OAuth 尚未完成')
+        }
+      },
+      { successTitle: 'OAuth 已完成', successDescription: '现在可以部署到工作空间', errorTitle: 'OAuth 尚未完成' }
+    )
+  }
+
+  async function handleStartServiceOAuth(service: Service) {
+    if (!service.url) return
+    setOauthAction(`start:${service.name}`)
+    await runAction(
+      async () => {
+        const flow = await gatewayApi.startMCPOAuth({ resource_url: service.url || '' })
+        setServiceOAuthFlows((items) => ({ ...items, [service.name]: { state: flow.state, status: flow.status } }))
+        window.open(flow.authorization_url, '_blank', 'noopener,noreferrer')
+      },
+      { successTitle: '已打开鉴权页面', successDescription: '完成授权后检查状态以更新令牌', errorTitle: 'OAuth 发现失败' }
+    )
+    setOauthAction('')
+  }
+
+  async function handleCheckServiceOAuth(service: Service) {
+    const flow = serviceOAuthFlows[service.name]
+    if (!flow?.state) return
+    setOauthAction(`check:${service.name}`)
+    await runAction(
+      async () => {
+        const status = await gatewayApi.getMCPOAuthStatus(flow.state)
+        setServiceOAuthFlows((items) => ({ ...items, [service.name]: { state: flow.state, status: status.status, error: status.error } }))
+        if (status.status !== 'authorized') throw new Error(status.error || 'OAuth 尚未完成')
+        await gatewayApi.updateService(workspaceId, service.name, {
+          name: service.name,
+          url: service.url,
+          gateway_protocol: service.gateway_protocol || 'streamhttp',
+          auth: { type: 'oauth2', state: flow.state },
+        })
+        await refreshWorkspace()
+      },
+      { successTitle: '令牌已更新', successDescription: '该 MCP 已可继续使用', errorTitle: 'OAuth 尚未完成' }
+    )
+    setOauthAction('')
   }
 
   async function handleSaveSettings() {
@@ -340,8 +434,8 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="sse">SSE (Server-Sent Events)</SelectItem>
-                          <SelectItem value="streamhttp">Stream HTTP</SelectItem>
+                          <SelectItem value="sse">Remote SSE</SelectItem>
+                          <SelectItem value="streamhttp">Remote Streamable HTTP</SelectItem>
                           <SelectItem value="command">Command (命令行)</SelectItem>
                         </SelectContent>
                       </Select>
@@ -353,8 +447,44 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                           id="custom-url"
                           value={customForm.url || ''}
                           onChange={(e) => setCustomForm((v) => ({ ...v, url: e.target.value }))}
-                          placeholder="例如: http://localhost:3000/sse"
+                          placeholder={customForm.protocol === 'streamhttp' ? '例如: https://example.com/mcp' : '例如: https://example.com/sse'}
                         />
+                      </div>
+                    )}
+                    {(customForm.protocol === 'sse' || customForm.protocol === 'streamhttp') && (
+                      <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label htmlFor="custom-auth-enabled">OAuth 2.0 鉴权</Label>
+                          <Select
+                            value={customForm.authEnabled ? 'oauth2' : 'none'}
+                            onValueChange={(value) => setCustomForm((v) => ({ ...v, authEnabled: value === 'oauth2', authState: '', authAuthorized: false, authStatus: undefined, authError: undefined, authLoading: false }))}
+                          >
+                            <SelectTrigger id="custom-auth-enabled" className="w-36">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">无</SelectItem>
+                              <SelectItem value="oauth2">OAuth 2.0</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {customForm.authEnabled && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={handleStartCustomOAuth} disabled={!customForm.url || customForm.authLoading}>
+                              <ExternalLink className="mr-2 h-4 w-4" />
+                              {customForm.authLoading ? '获取中...' : customForm.authAuthorized ? '重新鉴权' : '自动获取并鉴权'}
+                            </Button>
+                            <Button type="button" variant="outline" size="sm" onClick={handleCheckCustomOAuth} disabled={!customForm.authState}>
+                              检查鉴权状态
+                            </Button>
+                            {customForm.authStatus && (
+                              <Badge variant={customForm.authAuthorized ? 'default' : 'secondary'}>
+                                {customForm.authAuthorized ? '已授权' : customForm.authStatus}
+                              </Badge>
+                            )}
+                            {customForm.authError && <span className="text-sm text-destructive">{customForm.authError}</span>}
+                          </div>
+                        )}
                       </div>
                     )}
                     {customForm.protocol === 'command' && (
@@ -393,7 +523,7 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsCustomOpen(false)} disabled={submitting}>取消</Button>
-                    <Button onClick={handleCustomDeploy} disabled={submitting || !customForm.name || (customForm.protocol === 'command' && !customForm.command) || ((customForm.protocol === 'sse' || customForm.protocol === 'streamhttp') && !customForm.url)}>
+                    <Button onClick={handleCustomDeploy} disabled={submitting || !customForm.name || (customForm.protocol === 'command' && !customForm.command) || ((customForm.protocol === 'sse' || customForm.protocol === 'streamhttp') && !customForm.url) || (customForm.authEnabled && (!customForm.authState || !customForm.authAuthorized))}>
                       {submitting ? (
                         <>
                           <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
@@ -422,13 +552,25 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                     {installedPackages.map((pkg) => (
                       <div key={pkg.id} className="flex items-center justify-between rounded-xl border bg-muted/30 p-4">
                         <div>
-                          <p className="font-medium">{pkg.display_name || pkg.package_name}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium">{pkg.display_name || pkg.package_name}</p>
+                            {pkg.auth?.type === 'oauth2' && (
+                              <Badge variant={pkg.auth.status === 'authorized' ? 'default' : 'secondary'}>
+                                {pkg.auth.status === 'authorized' ? 'OAuth 已授权' : 'OAuth 待授权'}
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-sm text-muted-foreground">
                             {pkg.package_id} · v{pkg.installed_version} · {pkg.source_id || 'local'}
                           </p>
                         </div>
                         <Button size="sm" onClick={() => handleAddInstalledPackage(pkg)} disabled={addingInstalledId === pkg.id}>
-                          {addingInstalledId === pkg.id ? '添加中...' : '添加'}
+                          {pkg.auth?.type === 'oauth2' && pkg.auth.status !== 'authorized' ? (
+                            <>
+                              <ExternalLink className="mr-2 h-4 w-4" />
+                              鉴权
+                            </>
+                          ) : addingInstalledId === pkg.id ? '添加中...' : '添加'}
                         </Button>
                       </div>
                     ))}
@@ -468,6 +610,12 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                           >
                             {mcp.status === 'running' ? '运行中' : mcp.status === 'failed' ? '失败' : '已停止'}
                           </Badge>
+                          {mcp.url && mcp.auth_status === 'authorized' && <Badge variant="secondary">OAuth 已授权</Badge>}
+                          {mcp.url && serviceOAuthFlows[mcp.name]?.status && (
+                            <Badge variant={serviceOAuthFlows[mcp.name]?.status === 'authorized' ? 'default' : 'secondary'}>
+                              {serviceOAuthFlows[mcp.name]?.status === 'authorized' ? 'OAuth 待更新' : serviceOAuthFlows[mcp.name]?.status}
+                            </Badge>
+                          )}
                         </div>
                         <CardDescription className="mt-1">
                           {mcp.source_type === 'market' ? `来自市场: ${mcp.source_ref}` : mcp.command || mcp.url || '自定义服务'}
@@ -496,6 +644,12 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                           <RefreshCw className="mr-2 h-4 w-4" />
                           {serviceActionKey === `restart:${mcp.name}` ? '重启中...' : '重启'}
                         </DropdownMenuItem>
+                        {mcp.url && (
+                          <DropdownMenuItem onSelect={() => handleStartServiceOAuth(mcp)} disabled={oauthAction === `start:${mcp.name}`}>
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            {oauthAction === `start:${mcp.name}` ? '获取中...' : mcp.auth_status === 'authorized' ? '重新鉴权' : '鉴权'}
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem onSelect={() => handleServiceAction('delete', mcp.name)} disabled={serviceActionKey === `delete:${mcp.name}`} className="text-destructive">
                           <Trash2 className="mr-2 h-4 w-4" />
                           {serviceActionKey === `delete:${mcp.name}` ? '删除中...' : '删除'}
@@ -508,9 +662,18 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
                   <div className="grid gap-2 text-sm text-muted-foreground">
                     <p>工具数：{mcp.tools_count}</p>
                     <p>端口：{mcp.port || '-'}</p>
+                    {mcp.url && <p>协议：{mcp.gateway_protocol === 'streamhttp' ? 'Streamable HTTP' : 'SSE'}</p>}
                     <p>部署时间：{formatDateTime(mcp.created_at)}</p>
                     {mcp.last_error && <p className="text-red-600 dark:text-red-400">错误：{mcp.last_error}</p>}
                   </div>
+                  {mcp.url && serviceOAuthFlows[mcp.name]?.state && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={() => handleCheckServiceOAuth(mcp)} disabled={oauthAction === `check:${mcp.name}`}>
+                        {oauthAction === `check:${mcp.name}` ? '检查中...' : '检查鉴权状态并更新令牌'}
+                      </Button>
+                      {serviceOAuthFlows[mcp.name]?.error && <span className="text-sm text-destructive">{serviceOAuthFlows[mcp.name]?.error}</span>}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

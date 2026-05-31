@@ -59,12 +59,15 @@ func (h *Handler) registerV1Routes(e *echo.Echo) {
 	publicV1.POST("/auth/login", h.handleV1AuthLogin)
 	publicV1.POST("/auth/register", h.handleV1AuthRegister)
 	publicV1.POST("/auth/refresh", h.handleV1AuthRefresh)
+	publicV1.GET("/mcp-oauth/callback", h.handleV1MCPOAuthCallback)
 
 	v1 := e.Group("/api/v1")
 	v1.Use(h.v1AuthMiddleware)
 
 	v1.GET("/auth/me", h.handleV1AuthMe)
 	v1.POST("/auth/logout", h.handleV1AuthLogout)
+	v1.POST("/mcp-oauth/start", h.handleV1StartMCPOAuth)
+	v1.GET("/mcp-oauth/status/:state", h.handleV1MCPOAuthStatus)
 	v1.GET("/stats/overview", h.handleV1StatsOverview)
 
 	v1.GET("/workspaces", h.handleV1ListWorkspaces)
@@ -91,6 +94,8 @@ func (h *Handler) registerV1Routes(e *echo.Echo) {
 	v1.GET("/sessions/:id", h.handleV1GetSession)
 
 	v1.GET("/installed", h.handleV1Installed)
+	v1.PATCH("/installed/:id", h.handleV1UpdateInstalled)
+	v1.POST("/installed/:id/oauth/complete", h.handleV1CompleteInstalledOAuth)
 	v1.DELETE("/installed/:id", h.handleV1DeleteInstalled)
 	v1.GET("/api-keys", h.handleV1ListAPIKeys)
 	v1.POST("/api-keys", h.handleV1CreateAPIKey)
@@ -742,20 +747,22 @@ func (h *Handler) handleV1DeleteWorkspace(c echo.Context) error {
 }
 
 type serviceView struct {
-	Name        string            `json:"name"`
-	WorkspaceID string            `json:"workspace_id"`
-	SourceType  string            `json:"source_type"`
-	SourceRef   string            `json:"source_ref"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	Env         map[string]string `json:"env,omitempty"`
-	URL         string            `json:"url,omitempty"`
-	Status      string            `json:"status"`
-	Port        int               `json:"port,omitempty"`
-	ToolsCount  int               `json:"tools_count"`
-	LastError   string            `json:"last_error,omitempty"`
-	RetryCount  int               `json:"retry_count"`
-	CreatedAt   string            `json:"created_at"`
+	Name            string            `json:"name"`
+	WorkspaceID     string            `json:"workspace_id"`
+	SourceType      string            `json:"source_type"`
+	SourceRef       string            `json:"source_ref"`
+	Command         string            `json:"command,omitempty"`
+	Args            []string          `json:"args,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	GatewayProtocol string            `json:"gateway_protocol,omitempty"`
+	AuthStatus      string            `json:"auth_status,omitempty"`
+	Status          string            `json:"status"`
+	Port            int               `json:"port,omitempty"`
+	ToolsCount      int               `json:"tools_count"`
+	LastError       string            `json:"last_error,omitempty"`
+	RetryCount      int               `json:"retry_count"`
+	CreatedAt       string            `json:"created_at"`
 }
 
 func (h *Handler) buildServiceViews(workspaceID string) []serviceView {
@@ -789,20 +796,22 @@ func (h *Handler) buildServiceViews(workspaceID string) []serviceView {
 			sourceType = "url"
 		}
 		items = append(items, serviceView{
-			Name:        name,
-			WorkspaceID: workspaceID,
-			SourceType:  sourceType,
-			SourceRef:   sourceRef,
-			Command:     info.Config.Command,
-			Args:        info.Config.Args,
-			Env:         maskEnv(info.Config.Env),
-			URL:         info.Config.URL,
-			Status:      normalizeServiceStatus(info.Status),
-			Port:        info.Port,
-			ToolsCount:  h.serviceToolsCount(workspaceID, name),
-			LastError:   info.LastError,
-			RetryCount:  info.RetryCount,
-			CreatedAt:   createdAt.UTC().Format(time.RFC3339),
+			Name:            name,
+			WorkspaceID:     workspaceID,
+			SourceType:      sourceType,
+			SourceRef:       sourceRef,
+			Command:         info.Config.Command,
+			Args:            info.Config.Args,
+			Env:             maskEnv(info.Config.Env),
+			URL:             info.Config.URL,
+			GatewayProtocol: info.Config.GatewayProtocol,
+			AuthStatus:      serviceOAuthStatus(info.Config),
+			Status:          normalizeServiceStatus(info.Status),
+			Port:            info.Port,
+			ToolsCount:      h.serviceToolsCount(workspaceID, name),
+			LastError:       info.LastError,
+			RetryCount:      info.RetryCount,
+			CreatedAt:       createdAt.UTC().Format(time.RFC3339),
 		})
 		delete(metaMap, name)
 	}
@@ -874,7 +883,7 @@ func (h *Handler) handleV1CreateService(c echo.Context) error {
 		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	}
 
-	name, cfg, meta, err := h.parseServiceRequest(wsID, raw)
+	name, cfg, meta, err := h.parseServiceRequest(c.Request().Context(), wsID, raw)
 	if err != nil {
 		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
 	}
@@ -942,6 +951,9 @@ func (h *Handler) handleV1CreateServiceFromInstalled(c echo.Context) error {
 	for k, v := range req.Env {
 		cfg.Env[k] = v
 	}
+	if auth := installedPackageAuthState(installed); auth != nil && auth.Status != "authorized" {
+		return respondError(c, http.StatusConflict, "OAUTH_REQUIRED", "OAuth authorization is required before adding this MCP to a workspace", auth)
+	}
 	result, err := h.DeployServer(serviceName, cfg)
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "MCP_DEPLOY_FAILED", err.Error(), nil)
@@ -1005,7 +1017,7 @@ func (h *Handler) handleV1BatchCreateServices(c echo.Context) error {
 	results := make(map[string]map[string]string, len(req.MCPServers))
 	for name, body := range req.MCPServers {
 		body["name"] = name
-		_, cfg, meta, err := h.parseServiceRequest(wsID, body)
+		_, cfg, meta, err := h.parseServiceRequest(c.Request().Context(), wsID, body)
 		if err != nil {
 			results[name] = map[string]string{"status": "failed", "message": err.Error()}
 			summary["failed"]++
@@ -1053,7 +1065,7 @@ func (h *Handler) handleV1UpdateService(c echo.Context) error {
 		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	}
 	raw["name"] = name
-	_, cfg, meta, err := h.parseServiceRequest(wsID, raw)
+	_, cfg, meta, err := h.parseServiceRequest(c.Request().Context(), wsID, raw)
 	if err != nil {
 		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error(), nil)
 	}
@@ -1364,6 +1376,70 @@ func (h *Handler) handleV1DeleteInstalled(c echo.Context) error {
 	return respondOK(c, map[string]string{"id": c.Param("id")})
 }
 
+func (h *Handler) handleV1UpdateInstalled(c echo.Context) error {
+	principal := h.currentPrincipal(c)
+	var req struct {
+		DisplayName *string           `json:"display_name"`
+		Args        []string          `json:"args"`
+		Env         map[string]string `json:"env"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
+	item, err := h.getAccountInstalledPackage(c.Request().Context(), principal.AccountID, c.Param("id"))
+	if err != nil {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "installed package not found", nil)
+	}
+	if req.DisplayName != nil {
+		item.DisplayName = strings.TrimSpace(*req.DisplayName)
+	}
+	cfg := serviceConfigFromMap(item.ConfigSnapshot, "")
+	if req.Args != nil {
+		cfg.Args = append([]string(nil), req.Args...)
+	}
+	if req.Env != nil {
+		cfg.Env = copyStringMap(req.Env)
+	} else if cfg.Env == nil {
+		cfg.Env = map[string]string{}
+	}
+	item.ConfigSnapshot = serviceConfigToMap(cfg)
+	copyInstalledAuthState(item.ConfigSnapshot, installedPackageAuthState(item))
+	item.UpdatedAt = time.Now().UTC()
+	updated, err := h.upsertAccountInstalledPackage(c.Request().Context(), *item)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	}
+	h.appendAudit(c, "installed.update", "installed_package", updated.ID, "", map[string]interface{}{
+		"package_id": updated.PackageID,
+	})
+	return respondOK(c, installedPackageView(updated, updated.Version))
+}
+
+func (h *Handler) handleV1CompleteInstalledOAuth(c echo.Context) error {
+	principal := h.currentPrincipal(c)
+	item, err := h.getAccountInstalledPackage(c.Request().Context(), principal.AccountID, c.Param("id"))
+	if err != nil {
+		return respondError(c, http.StatusNotFound, "NOT_FOUND", "installed package not found", nil)
+	}
+	auth := installedPackageAuthState(item)
+	if auth == nil {
+		return respondError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "installed package does not require OAuth", nil)
+	}
+	auth.Status = "authorized"
+	cfg := serviceConfigFromMap(item.ConfigSnapshot, "")
+	item.ConfigSnapshot = serviceConfigToMap(cfg)
+	copyInstalledAuthState(item.ConfigSnapshot, auth)
+	item.UpdatedAt = time.Now().UTC()
+	updated, err := h.upsertAccountInstalledPackage(c.Request().Context(), *item)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	}
+	h.appendAudit(c, "installed.oauth_complete", "installed_package", updated.ID, "", map[string]interface{}{
+		"package_id": updated.PackageID,
+	})
+	return respondOK(c, installedPackageView(updated, updated.Version))
+}
+
 func (h *Handler) handleV1MarketSources(c echo.Context) error {
 	items := h.market.listSources()
 	return respondOK(c, listData{
@@ -1458,6 +1534,7 @@ func (h *Handler) handleV1InstallMarketPackage(c echo.Context) error {
 		DisplayName        string            `json:"display_name"`
 		InstallOptionIndex int               `json:"install_option_index"`
 		Env                map[string]string `json:"env"`
+		Args               []string          `json:"args"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return respondError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -1470,7 +1547,19 @@ func (h *Handler) handleV1InstallMarketPackage(c echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusUnprocessableEntity, "PACKAGE_INSTALL_FAILED", err.Error(), nil)
 	}
+	if req.Args != nil {
+		cfg.Args = append([]string(nil), req.Args...)
+	}
 	cfg.GatewayProtocol = h.cfg.GatewayProtocol
+	configSnapshot := serviceConfigToMap(cfg)
+	if auth := marketInstallOptionAuth(*pkg, req.InstallOptionIndex); auth != nil {
+		copyInstalledAuthState(configSnapshot, &installedAuthState{
+			Type:             auth.Type,
+			AuthorizationURL: auth.AuthorizationURL,
+			Instructions:     auth.Instructions,
+			Status:           "pending",
+		})
+	}
 	version := pkg.Version
 	if version == "" && req.InstallOptionIndex >= 0 && req.InstallOptionIndex < len(pkg.InstallOptions) {
 		version = pkg.InstallOptions[req.InstallOptionIndex].PackageName
@@ -1489,7 +1578,7 @@ func (h *Handler) handleV1InstallMarketPackage(c echo.Context) error {
 		Version:            version,
 		SourceID:           sourceID,
 		InstallOptionIndex: req.InstallOptionIndex,
-		ConfigSnapshot:     serviceConfigToMap(cfg),
+		ConfigSnapshot:     configSnapshot,
 		PackageSnapshot:    marketPackageSnapshot(*pkg),
 		CreatedAt:          time.Now().UTC(),
 		UpdatedAt:          time.Now().UTC(),
@@ -1584,6 +1673,7 @@ func marketPackageDetailResponse(pkg MarketPackage) map[string]interface{} {
 			"args":    opt.Args,
 			"env":     opt.Env,
 			"url":     opt.URL,
+			"auth":    opt.Auth,
 		}
 	}
 	return map[string]interface{}{
@@ -1617,6 +1707,7 @@ func marketPackageDetailResponse(pkg MarketPackage) map[string]interface{} {
 }
 
 func installedPackageView(item identity.InstalledPackage, latestVersion string) map[string]interface{} {
+	auth := installedPackageAuthState(&item)
 	return map[string]interface{}{
 		"id":                   item.ID,
 		"account_id":           item.AccountID,
@@ -1629,9 +1720,64 @@ func installedPackageView(item identity.InstalledPackage, latestVersion string) 
 		"install_option_index": item.InstallOptionIndex,
 		"config_snapshot":      item.ConfigSnapshot,
 		"package_snapshot":     item.PackageSnapshot,
+		"auth":                 auth,
 		"status":               "installed",
 		"installed_at":         item.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":           item.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+type installedAuthState struct {
+	Type             string `json:"type"`
+	AuthorizationURL string `json:"authorization_url,omitempty"`
+	Instructions     string `json:"instructions,omitempty"`
+	Status           string `json:"status"`
+}
+
+func installedPackageAuthState(item *identity.InstalledPackage) *installedAuthState {
+	if item == nil || item.ConfigSnapshot == nil {
+		return nil
+	}
+	raw, ok := item.ConfigSnapshot["auth"]
+	if !ok {
+		raw, ok = item.ConfigSnapshot["_auth"]
+	}
+	if !ok {
+		return nil
+	}
+	authMap, ok := raw.(map[string]interface{})
+	if !ok {
+		if primitiveMap, ok := raw.(primitive.M); ok {
+			authMap = map[string]interface{}(primitiveMap)
+		} else {
+			return nil
+		}
+	}
+	authType := strings.ToLower(strings.TrimSpace(asString(authMap["type"])))
+	if authType != "oauth2" {
+		return nil
+	}
+	status := strings.ToLower(strings.TrimSpace(asString(authMap["status"])))
+	if status == "" {
+		status = "pending"
+	}
+	return &installedAuthState{
+		Type:             "oauth2",
+		AuthorizationURL: asString(authMap["authorization_url"]),
+		Instructions:     asString(authMap["instructions"]),
+		Status:           status,
+	}
+}
+
+func copyInstalledAuthState(snapshot map[string]interface{}, auth *installedAuthState) {
+	if snapshot == nil || auth == nil {
+		return
+	}
+	snapshot["auth"] = map[string]interface{}{
+		"type":              auth.Type,
+		"authorization_url": auth.AuthorizationURL,
+		"instructions":      auth.Instructions,
+		"status":            auth.Status,
 	}
 }
 
@@ -1722,6 +1868,16 @@ func serviceConfigFromMap(raw map[string]interface{}, workspaceID string) config
 		cfg.Env = map[string]string{}
 	}
 	return cfg
+}
+
+func serviceOAuthStatus(cfg config.MCPServerConfig) string {
+	if cfg.URL == "" {
+		return ""
+	}
+	if cfg.Env != nil && strings.TrimSpace(cfg.Env[remoteOAuthAccessTokenEnv]) != "" {
+		return "authorized"
+	}
+	return ""
 }
 
 func serviceDesiredStatus(raw map[string]interface{}) string {
@@ -2110,7 +2266,7 @@ func (h *Handler) handleV1ListAuditLogs(c echo.Context) error {
 	return respondOK(c, listData{Items: out, Total: len(out), Page: 1, PageSize: len(out)})
 }
 
-func (h *Handler) parseServiceRequest(workspaceID string, raw map[string]interface{}) (string, config.MCPServerConfig, serviceMeta, error) {
+func (h *Handler) parseServiceRequest(ctx context.Context, workspaceID string, raw map[string]interface{}) (string, config.MCPServerConfig, serviceMeta, error) {
 	name := strings.TrimSpace(asString(raw["name"]))
 	if name == "" {
 		return "", config.MCPServerConfig{}, serviceMeta{}, fmt.Errorf("service name is required")
@@ -2144,6 +2300,10 @@ func (h *Handler) parseServiceRequest(workspaceID string, raw map[string]interfa
 	if url := asString(raw["url"]); url != "" {
 		meta.SourceType = "url"
 		cfg.URL = url
+		cfg.GatewayProtocol = asGatewayProtocol(raw["gateway_protocol"])
+		if err := h.applyRequestOAuth(ctx, raw["auth"], &cfg); err != nil {
+			return "", config.MCPServerConfig{}, serviceMeta{}, err
+		}
 		return name, cfg, meta, nil
 	}
 
@@ -2155,7 +2315,54 @@ func (h *Handler) parseServiceRequest(workspaceID string, raw map[string]interfa
 	cfg.Command = command
 	cfg.Args = asStringSlice(raw["args"])
 	cfg.Env = asStringMap(raw["env"])
+	cfg.GatewayProtocol = asGatewayProtocol(raw["gateway_protocol"])
 	return name, cfg, meta, nil
+}
+
+func asGatewayProtocol(v interface{}) string {
+	protocol := strings.ToLower(strings.TrimSpace(asString(v)))
+	if protocol == "sse" || protocol == "streamhttp" {
+		return protocol
+	}
+	return ""
+}
+
+func (h *Handler) applyRequestOAuth(ctx context.Context, v interface{}, cfg *config.MCPServerConfig) error {
+	if v == nil {
+		return nil
+	}
+	authMap, ok := v.(map[string]interface{})
+	if !ok {
+		if primitiveMap, ok := v.(primitive.M); ok {
+			authMap = map[string]interface{}(primitiveMap)
+		} else {
+			return nil
+		}
+	}
+	authType := strings.ToLower(strings.TrimSpace(asString(authMap["type"])))
+	if authType == "" {
+		return nil
+	}
+	if authType != "oauth2" {
+		return fmt.Errorf("unsupported auth type %q", authType)
+	}
+	state := strings.TrimSpace(asString(authMap["state"]))
+	if state != "" {
+		flow, ok := h.oauth.get(state)
+		if !ok || flow.Status != "authorized" || flow.AccessToken == "" {
+			return fmt.Errorf("OAuth authorization is required before deploying this MCP")
+		}
+		if cfg.Env == nil {
+			cfg.Env = map[string]string{}
+		}
+		cfg.Env[remoteOAuthAccessTokenEnv] = flow.AccessToken
+		return nil
+	}
+	if strings.ToLower(strings.TrimSpace(asString(authMap["status"]))) != "authorized" {
+		return fmt.Errorf("OAuth authorization is required before deploying this MCP")
+	}
+	_ = ctx
+	return nil
 }
 
 func asString(v interface{}) string {

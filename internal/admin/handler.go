@@ -19,6 +19,7 @@ type Handler struct {
 	auth     *identity.Service
 	state    *controlPlaneState
 	market   *marketStore
+	oauth    *mcpOAuthFlowStore
 	mu       sync.RWMutex
 }
 
@@ -34,6 +35,7 @@ func NewHandler(services workspaces.ServiceManagerI, cfg *config.Config, auth *i
 		auth:     auth,
 		state:    newControlPlaneState(),
 		market:   market,
+		oauth:    newMCPOAuthFlowStore(),
 	}
 }
 

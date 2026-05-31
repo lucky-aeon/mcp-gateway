@@ -7,6 +7,7 @@ type marketInstallSpec struct {
 	Command string
 	Args    []string
 	Env     map[string]string
+	Auth    *MarketAuthSpec
 }
 
 type marketToolSpec struct {
@@ -116,6 +117,11 @@ var defaultMarketPackages = []marketPackage{
 			Command: "",
 			Args:    nil,
 			Env:     map[string]string{},
+			Auth: &MarketAuthSpec{
+				Type:             "oauth2",
+				AuthorizationURL: "https://github.com/login/oauth/authorize",
+				Instructions:     "完成 GitHub OAuth 授权后再添加到工作空间。",
+			},
 		},
 		Tools: []marketToolSpec{
 			{Name: "list_repos", Description: "列出仓库。", InputSchema: map[string]interface{}{"type": "object"}},

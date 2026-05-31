@@ -97,6 +97,9 @@ func (h *Handler) proxyHandler() echo.HandlerFunc {
 		for k, v := range c.Request().Header {
 			req.Header[k] = v
 		}
+		if token := downstreamOAuthToken(instance); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 
 		// 发送请求
 		client := &http.Client{

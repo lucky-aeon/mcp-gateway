@@ -45,7 +45,7 @@ func TestSession(t *testing.T) {
 			t.Errorf("mockMcpServiceFileSystem.Stop failed: %v", err)
 		}
 	}()
-	err := session.SubscribeSSE(xl, mcpFileSystem.Name, mcpFileSystem.GetSSEUrl())
+	err := session.SubscribeSSE(xl, mcpFileSystem.Name, mcpFileSystem.GetSSEUrl(), nil)
 	if err != nil {
 		t.Fatalf("subscribeSSE failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestSessionAggregatedToolsList(t *testing.T) {
 	}()
 
 	// 订阅第一个MCP
-	err := session.SubscribeSSE(xl, mcpFileSystem.Name, mcpFileSystem.GetSSEUrl())
+	err := session.SubscribeSSE(xl, mcpFileSystem.Name, mcpFileSystem.GetSSEUrl(), nil)
 	if err != nil {
 		t.Fatalf("subscribeSSE failed for fileSystem: %v", err)
 	}

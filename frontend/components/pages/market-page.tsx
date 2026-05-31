@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Download, Package, Search, Star, Store } from 'lucide-react'
+import { Check, Download, ExternalLink, Package, Search, Star, Store } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -22,11 +23,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { gatewayApi, invalidate, useGatewaySWR, type ListData, type MarketPackage, type MarketSource } from '@/lib/gateway-api'
 import { runAction } from '@/lib/action-feedback'
 
 const categories = ['全部', '系统', '数据', '网络', '开发', '通讯', '效率']
+
+function parseEnv(value: string) {
+  const env: Record<string, string> = {}
+  value.split('\n').forEach((line) => {
+    const [key, ...valueParts] = line.split('=')
+    if (key.trim() && valueParts.length > 0) {
+      env[key.trim()] = valueParts.join('=').trim()
+    }
+  })
+  return env
+}
+
+function formatEnv(env?: Record<string, string>) {
+  return Object.entries(env || {}).map(([key, value]) => `${key}=${value}`).join('\n')
+}
 
 export function MarketPage() {
   const { data: sourcesData } = useGatewaySWR<ListData<MarketSource>>('/api/v1/market/sources')
@@ -38,6 +55,8 @@ export function MarketPage() {
   const { data: marketData } = useGatewaySWR<ListData<MarketPackage>>(marketPath)
   const [selectedMCP, setSelectedMCP] = useState<MarketPackage | null>(null)
   const [installOptionIndex, setInstallOptionIndex] = useState(0)
+  const [installArgs, setInstallArgs] = useState('')
+  const [installEnv, setInstallEnv] = useState('')
   const [installingPackageId, setInstallingPackageId] = useState('')
 
   const installedIds = new Set((installedData?.items || []).map((m) => m.package_id))
@@ -68,6 +87,8 @@ export function MarketPage() {
         await gatewayApi.installMarketPackage(pkg.id, {
           display_name: pkg.title || pkg.name,
           install_option_index: installOptionIndex,
+          args: installArgs.split('\n').map((arg) => arg.trim()).filter(Boolean),
+          env: parseEnv(installEnv),
         })
         await Promise.all([invalidate('/api/v1/market/packages'), invalidate('/api/v1/installed')])
       },
@@ -149,7 +170,10 @@ export function MarketPage() {
               onClick={() => {
                 setSelectedMCP(mcp)
                 const firstInstallable = (mcp.install_options || []).findIndex((option) => option.type !== 'manual' && option.type !== 'unsupported')
-                setInstallOptionIndex(firstInstallable >= 0 ? firstInstallable : 0)
+                const index = firstInstallable >= 0 ? firstInstallable : 0
+                setInstallOptionIndex(index)
+                setInstallArgs((mcp.install_options?.[index]?.args || []).join('\n'))
+                setInstallEnv(formatEnv(mcp.install_options?.[index]?.env))
               }}
             >
               <CardHeader className="pb-3">
@@ -212,7 +236,16 @@ export function MarketPage() {
               {selectedInstallOptions.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-sm font-medium">安装方式</p>
-                  <Select value={String(installOptionIndex)} onValueChange={(value) => setInstallOptionIndex(Number(value))}>
+                  <Select
+                    value={String(installOptionIndex)}
+                    onValueChange={(value) => {
+                      const index = Number(value)
+                      const option = selectedInstallOptions[index]
+                      setInstallOptionIndex(index)
+                      setInstallArgs((option?.args || []).join('\n'))
+                      setInstallEnv(formatEnv(option?.env))
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="选择安装方式" />
                     </SelectTrigger>
@@ -224,6 +257,29 @@ export function MarketPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+              )}
+              {selectedInstallOptions[installOptionIndex]?.auth?.type === 'oauth2' && (
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium">OAuth 2.0 鉴权</p>
+                      <p className="mt-1 text-muted-foreground">{selectedInstallOptions[installOptionIndex]?.auth?.instructions || '安装到工作空间前需要完成 OAuth 授权。'}</p>
+                    </div>
+                    <Badge variant="secondary">OAuth2</Badge>
+                  </div>
+                </div>
+              )}
+              {selectedInstallOptions.length > 0 && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="market-install-args">参数</Label>
+                    <Textarea id="market-install-args" value={installArgs} onChange={(e) => setInstallArgs(e.target.value)} rows={4} placeholder="每行一个参数" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="market-install-env">环境变量</Label>
+                    <Textarea id="market-install-env" value={installEnv} onChange={(e) => setInstallEnv(e.target.value)} rows={4} placeholder="KEY=VALUE，每行一个" />
+                  </div>
                 </div>
               )}
               <div>
@@ -251,7 +307,7 @@ export function MarketPage() {
                   onClick={() => handleInstall(selectedMCP)}
                   disabled={installingPackageId === selectedMCP.id || ['manual', 'unsupported'].includes(selectedInstallOptions[installOptionIndex]?.type || selectedMCP.installability || 'manual')}
                 >
-                  <Package className="h-4 w-4" />
+                  {selectedInstallOptions[installOptionIndex]?.auth?.type === 'oauth2' ? <ExternalLink className="h-4 w-4" /> : <Package className="h-4 w-4" />}
                   {installingPackageId === selectedMCP.id ? '安装中...' : '安装到账号'}
                 </Button>
               )}

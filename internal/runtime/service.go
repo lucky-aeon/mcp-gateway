@@ -384,9 +384,14 @@ func (s *McpService) GetSSEUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
+	if s.IsSSE() && s.Config.GatewayProtocol != "streamhttp" {
+		return s.Config.URL
+	}
 	if s.isSSE {
-		sseUrl, _ := s.bridge.(bridge.SSEBridge).CompleteSseEndpoint()
-		return s.GetUrl() + sseUrl
+		if sseBridge, ok := s.bridge.(bridge.SSEBridge); ok && sseBridge != nil {
+			sseUrl, _ := sseBridge.CompleteSseEndpoint()
+			return s.GetUrl() + sseUrl
+		}
 	}
 	return ""
 }
@@ -395,12 +400,21 @@ func (s *McpService) GetMessageUrl() string {
 	if s.GetStatus() != Running {
 		return ""
 	}
-	if s.isSSE {
-		mesUrl, _ := s.bridge.(bridge.SSEBridge).CompleteMessageEndpoint()
-		return s.GetUrl() + mesUrl
+	if s.IsSSE() && s.Config.GatewayProtocol == "streamhttp" {
+		return s.Config.URL
 	}
-	httpUrl, _ := s.bridge.(bridge.HTTPStreamBridge).CompleteHTTPStreamEndpoint()
-	return s.GetUrl() + httpUrl
+	if s.isSSE {
+		if sseBridge, ok := s.bridge.(bridge.SSEBridge); ok && sseBridge != nil {
+			mesUrl, _ := sseBridge.CompleteMessageEndpoint()
+			return s.GetUrl() + mesUrl
+		}
+		return ""
+	}
+	if httpBridge, ok := s.bridge.(bridge.HTTPStreamBridge); ok && httpBridge != nil {
+		httpUrl, _ := httpBridge.CompleteHTTPStreamEndpoint()
+		return s.GetUrl() + httpUrl
+	}
+	return ""
 }
 
 func (s *McpService) GetPort() int {

@@ -68,9 +68,16 @@ type MarketInstallOption struct {
 	Image       string                 `json:"image,omitempty"`
 	PackageName string                 `json:"package_name,omitempty"`
 	RequiredEnv []MarketEnvVarSpec     `json:"required_env,omitempty"`
+	Auth        *MarketAuthSpec        `json:"auth,omitempty"`
 	SourceID    string                 `json:"source_id"`
 	Confidence  string                 `json:"confidence"`
 	Raw         map[string]interface{} `json:"raw,omitempty"`
+}
+
+type MarketAuthSpec struct {
+	Type             string `json:"type"`
+	AuthorizationURL string `json:"authorization_url,omitempty"`
+	Instructions     string `json:"instructions,omitempty"`
 }
 
 type MarketToolSpec struct {
@@ -708,6 +715,7 @@ func marketPackageFromSeed(pkg marketPackage, now time.Time) MarketPackage {
 		Command:    pkg.Install.Command,
 		Args:       append([]string(nil), pkg.Install.Args...),
 		Env:        copyStringMap(pkg.Install.Env),
+		Auth:       pkg.Install.Auth,
 		SourceID:   sourceID,
 		Confidence: "high",
 	}
@@ -790,6 +798,21 @@ func marketPackageToServiceConfig(pkg MarketPackage, optionIndex int, workspaceI
 		cfg.Env[k] = v
 	}
 	return cfg, nil
+}
+
+func marketInstallOptionAuth(pkg MarketPackage, optionIndex int) *MarketAuthSpec {
+	if optionIndex < 0 {
+		optionIndex = 0
+	}
+	if optionIndex >= len(pkg.InstallOptions) {
+		return nil
+	}
+	auth := pkg.InstallOptions[optionIndex].Auth
+	if auth == nil || strings.ToLower(strings.TrimSpace(auth.Type)) != "oauth2" {
+		return nil
+	}
+	cp := *auth
+	return &cp
 }
 
 func normalizeInstallType(t string) string {

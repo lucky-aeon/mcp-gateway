@@ -125,3 +125,62 @@ func TestMcpService_Restart_MaxRetriesReached(t *testing.T) {
 		t.Errorf("Expected last error to be 'Service failed after maximum retry attempts', got %s", service.LastError)
 	}
 }
+
+func TestMcpService_InfoToleratesRunningServiceWithoutBridge(t *testing.T) {
+	service := &McpService{
+		Name:   "custom-service",
+		Status: Running,
+		Config: config.MCPServerConfig{
+			Command:         "npx",
+			GatewayProtocol: "streamhttp",
+		},
+		portMgr: mockPortMgr,
+		mutex:   sync.RWMutex{},
+	}
+
+	info := service.Info()
+
+	if info.Name != "custom-service" {
+		t.Fatalf("expected service info, got %#v", info)
+	}
+	if info.URLs.MessageUrl != "" {
+		t.Fatalf("expected empty message url without bridge, got %q", info.URLs.MessageUrl)
+	}
+}
+
+func TestMcpService_RemoteStreamHTTPUsesConfiguredURLAsMessageURL(t *testing.T) {
+	service := &McpService{
+		Name:   "remote-stream",
+		Status: Running,
+		Config: config.MCPServerConfig{
+			URL:             "https://example.com/mcp",
+			GatewayProtocol: "streamhttp",
+		},
+		portMgr: mockPortMgr,
+		mutex:   sync.RWMutex{},
+	}
+
+	if got := service.GetMessageUrl(); got != "https://example.com/mcp" {
+		t.Fatalf("expected remote streamhttp message url, got %q", got)
+	}
+	if got := service.GetSSEUrl(); got != "" {
+		t.Fatalf("expected no sse url for streamhttp remote, got %q", got)
+	}
+}
+
+func TestMcpService_RemoteSSEUsesConfiguredURLAsSSEURL(t *testing.T) {
+	service := &McpService{
+		Name:   "remote-sse",
+		Status: Running,
+		Config: config.MCPServerConfig{
+			URL:             "https://example.com/sse",
+			GatewayProtocol: "sse",
+		},
+		portMgr: mockPortMgr,
+		mutex:   sync.RWMutex{},
+	}
+
+	if got := service.GetSSEUrl(); got != "https://example.com/sse" {
+		t.Fatalf("expected remote sse url, got %q", got)
+	}
+}

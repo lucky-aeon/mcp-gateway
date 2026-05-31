@@ -68,11 +68,12 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 		}
 		runningServices++
 
+		headers := downstreamAuthHeaders(mcpService)
 		var err error
-		if mcpService.IsSSE() {
-			err = session.SubscribeSSE(xl, mcpService.Name, mcpService.GetSSEUrl())
+		if mcpService.IsSSE() && mcpService.Config.GatewayProtocol != "streamhttp" {
+			err = session.SubscribeSSE(xl, mcpService.Name, mcpService.GetSSEUrl(), headers)
 		} else {
-			err = session.SubscribeStreamHTTP(xl, mcpService.Name, mcpService.GetMessageUrl())
+			err = session.SubscribeStreamHTTP(xl, mcpService.Name, mcpService.GetMessageUrl(), headers)
 		}
 		if err != nil {
 			xl.Errorf("failed to subscribe to service %s: %v", mcpService.Name, err)
@@ -86,6 +87,17 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 	m.sessions[session.Id] = session
 	m.sessionsMutex.Unlock()
 	return session, nil
+}
+
+func downstreamAuthHeaders(mcpService *runtime.McpService) map[string]string {
+	if mcpService == nil || mcpService.Config.Env == nil {
+		return nil
+	}
+	token := mcpService.Config.Env[remoteOAuthAccessTokenEnv]
+	if token == "" {
+		return nil
+	}
+	return map[string]string{"Authorization": "Bearer " + token}
 }
 
 func (m *SessionManager) CloseSession(xl xlog.Logger, sessionId string) error {

@@ -55,6 +55,8 @@ export type Service = {
   args?: string[]
   env?: Record<string, string>
   url?: string
+  gateway_protocol?: 'sse' | 'streamhttp'
+  auth_status?: 'authorized' | 'needs_auth' | ''
   status: 'starting' | 'running' | 'stopped' | 'failed'
   port?: number
   tools_count: number
@@ -94,6 +96,12 @@ export type InstalledItem = {
   install_option_index: number
   config_snapshot?: Record<string, unknown>
   package_snapshot?: Record<string, unknown>
+  auth?: {
+    type: 'oauth2'
+    authorization_url?: string
+    instructions?: string
+    status: 'pending' | 'authorized'
+  } | null
   status: string
   installed_at: string
   updated_at: string
@@ -136,6 +144,11 @@ export type MarketPackage = {
       default?: string
       secret?: boolean
     }>
+    auth?: {
+      type: 'oauth2'
+      authorization_url?: string
+      instructions?: string
+    }
   }>
   source_refs?: Array<{
     source_id: string
@@ -231,6 +244,17 @@ export type LoginResponse = {
   user: MeInfo
 }
 
+export type MCPOAuthStartResponse = {
+  state: string
+  authorization_url: string
+  status: 'pending' | 'authorized' | 'failed'
+}
+
+export type MCPOAuthStatusResponse = MCPOAuthStartResponse & {
+  resource_url: string
+  error?: string
+}
+
 export type UserAPIKey = {
   id: string
   name: string
@@ -309,6 +333,10 @@ export const gatewayApi = {
   register: (body: { email: string; password: string; display_name?: string }) =>
     request<{ id: string; email: string; display_name: string; status: string; created_at: string }>('/api/v1/auth/register', { method: 'POST', body: JSON.stringify(body) }, { auth: false }),
   getMe: () => request<MeInfo>('/api/v1/auth/me'),
+  startMCPOAuth: (body: { resource_url: string }) =>
+    request<MCPOAuthStartResponse>('/api/v1/mcp-oauth/start', { method: 'POST', body: JSON.stringify(body) }),
+  getMCPOAuthStatus: (state: string) =>
+    request<MCPOAuthStatusResponse>(`/api/v1/mcp-oauth/status/${encodeURIComponent(state)}`),
   getStats: () => request<OverviewStats>('/api/v1/stats/overview'),
   listWorkspaces: () => request<ListData<Workspace>>('/api/v1/workspaces'),
   createWorkspace: (body: { id?: string; name: string; description?: string }) =>
@@ -321,6 +349,8 @@ export const gatewayApi = {
   listServices: (workspaceId: string) => request<ListData<Service>>(`/api/v1/workspaces/${workspaceId}/services`),
   createService: (workspaceId: string, body: Record<string, unknown>) =>
     request<Service>(`/api/v1/workspaces/${workspaceId}/services`, { method: 'POST', body: JSON.stringify(body) }),
+  updateService: (workspaceId: string, name: string, body: Record<string, unknown>) =>
+    request<Service>(`/api/v1/workspaces/${workspaceId}/services/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteService: (workspaceId: string, name: string) =>
     request<{ name: string }>(`/api/v1/workspaces/${workspaceId}/services/${name}`, { method: 'DELETE' }),
   restartService: (workspaceId: string, name: string) =>
@@ -344,6 +374,10 @@ export const gatewayApi = {
   listInstalled: () => request<ListData<InstalledItem>>('/api/v1/installed'),
   deleteInstalled: (id: string) =>
     request<{ id: string }>(`/api/v1/installed/${id}`, { method: 'DELETE' }),
+  updateInstalled: (id: string, body: { display_name?: string; args?: string[]; env?: Record<string, string> }) =>
+    request<InstalledItem>(`/api/v1/installed/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  completeInstalledOAuth: (id: string) =>
+    request<InstalledItem>(`/api/v1/installed/${id}/oauth/complete`, { method: 'POST' }),
   listAPIKeys: () => request<ListData<UserAPIKey>>('/api/v1/api-keys'),
   createAPIKey: (body: { name: string; workspace_id?: string; scope: string[]; expires_at?: string }) =>
     request<UserAPIKey>('/api/v1/api-keys', { method: 'POST', body: JSON.stringify(body) }),
@@ -361,7 +395,7 @@ export const gatewayApi = {
     request<Record<string, unknown>>(`/api/v1/market/sources/${id}/sync`, { method: 'POST' }),
   installMarketPackage: (
     id: string,
-    body: { display_name?: string; install_option_index?: number; env?: Record<string, string> }
+    body: { display_name?: string; install_option_index?: number; env?: Record<string, string>; args?: string[] }
   ) => request<InstalledItem>(`/api/v1/market/packages/${id}/install`, { method: 'POST', body: JSON.stringify(body) }),
   deployInstalledPackage: (
     workspaceId: string,
