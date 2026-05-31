@@ -192,6 +192,15 @@ export type SystemConfig = {
     enabled: boolean
     mode: string
     allow_register: boolean
+    authorization_servers?: string[]
+    token_issuer?: string
+    token_jwks_uri?: string
+    token_introspection_url?: string
+    token_introspection_id?: string
+    token_introspection_secret_set?: boolean
+    token_audience?: string
+    required_scopes?: string[]
+    scopes_supported?: string[]
   }
 }
 

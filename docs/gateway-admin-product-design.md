@@ -89,7 +89,7 @@ flowchart TD
 
 - `single-key`：`token = 用户输入并存本地的 API Key`
 - `saas` Web：`token = access_token`（`access_token` 放内存，`refresh_token` 由后端写 httpOnly cookie）
-- 外部 MCP 客户端：`token = Personal API Key 的 raw_key`（见 §6.8）
+- 外部 MCP 客户端：`token = OAuth access token`，需通过 MCP Protected Resource Metadata 发现授权服务器
 
 ---
 
@@ -736,7 +736,7 @@ Query：`tail=200`、`since=ISO`、`level=debug|info|warn|error`
 
 #### `GET /api/v1/workspaces/:ws/services/:name/logs/stream`
 
-协议：`text/event-stream`。每条 `event: log`，`data` 为 LogEntry JSON。由于 `EventSource` 不支持自定义头，前端 URL 带 `?api_key=<token>` 或用 `fetch` + `ReadableStream`。
+协议：`text/event-stream`。每条 `event: log`，`data` 为 LogEntry JSON。由于 `EventSource` 不支持自定义头，前端使用 `fetch` + `ReadableStream` 并携带 `Authorization: Bearer <token>`。
 
 ### 8.5 Sessions
 

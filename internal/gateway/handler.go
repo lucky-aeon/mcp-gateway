@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
@@ -28,7 +27,10 @@ func NewHandler(services workspaces.ServiceManagerI, cfg config.Config, auth *id
 //
 // proxyHandler 是 wildcard 路由（/*），需要通过 RegisterProxy 单独注册在所有其它路由之后。
 func (h *Handler) Register(e *echo.Echo) {
-	auth := middleware.KeyAuthWithConfig(identity.NewAuthMiddleware(&h.cfg, h.auth).GetKeyAuthConfig())
+	auth := h.mcpAuthMiddleware
+	e.GET("/.well-known/oauth-protected-resource", h.handleProtectedResourceMetadata)
+	e.GET("/.well-known/oauth-protected-resource/*", h.handleProtectedResourceMetadata)
+
 	if h.cfg.IsStreamHTTP() {
 		e.GET("/:service", auth(h.handleStreamHTTP))
 		e.POST("/:service", auth(h.handleStreamHTTP))
@@ -43,6 +45,6 @@ func (h *Handler) Register(e *echo.Echo) {
 
 // RegisterProxy 注册通配 /* 代理路由，必须在所有其它路由之后调用。
 func (h *Handler) RegisterProxy(e *echo.Echo) {
-	auth := middleware.KeyAuthWithConfig(identity.NewAuthMiddleware(&h.cfg, h.auth).GetKeyAuthConfig())
+	auth := h.mcpAuthMiddleware
 	e.Any("/*", auth(h.proxyHandler()))
 }

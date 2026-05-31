@@ -385,9 +385,9 @@ Content-Type: application/json
     
     Note over Client,WS: 客户端选择 Workspace
     
-    Client->>Gateway: GET /sse?api_key=<key>
+    Client->>Gateway: GET /sse + Authorization: Bearer <key>
     activate Gateway
-    Gateway->>WS: 验证 API Key
+    Gateway->>WS: 验证 OAuth access token
     WS-->>Gateway: Workspace 信息
     Gateway->>Session: 创建 Session
     Session-->>Gateway: Session ID
@@ -428,10 +428,7 @@ Content-Type: application/json
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`GET /sse HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
-
-# 或使用查询参数
-GET /sse?api_key=<your-api-key> HTTP/1.1`}
+Authorization: Bearer <access-token>`}
                     </pre>
                   </div>
                   
@@ -440,7 +437,7 @@ GET /sse?api_key=<your-api-key> HTTP/1.1`}
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`POST /message HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Content-Type: application/json
 
 {
@@ -459,7 +456,7 @@ Content-Type: application/json
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`POST /message HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Content-Type: application/json
 
 {
@@ -499,11 +496,11 @@ Content-Type: application/json
     participant Session as Session
     participant MCP as MCP Service
     
-    Note over Client,WS: 客户端选择 Workspace（通过 API Key scope）
+    Note over Client,WS: 客户端选择 Workspace（通过 access token audience/scope）
     
     Client->>Gateway: POST /stream (initialize)
     activate Gateway
-    Gateway->>WS: 验证 API Key，获取 Workspace
+    Gateway->>WS: 验证 OAuth access token，获取 Workspace
     WS-->>Gateway: Workspace 信息
     Gateway->>Session: 创建 Session，绑定 Workspace
     Session-->>Gateway: Session ID
@@ -567,7 +564,7 @@ Content-Type: application/json
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`POST /stream HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Accept: application/json, text/event-stream
 Content-Type: application/json
 
@@ -595,7 +592,7 @@ Content-Type: application/json
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`POST /stream HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Content-Type: application/json
 Mcp-Session-Id: <session-id>
 
@@ -611,7 +608,7 @@ Mcp-Session-Id: <session-id>
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`POST /stream HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Content-Type: application/json
 Mcp-Session-Id: <session-id>
 
@@ -637,7 +634,7 @@ Mcp-Session-Id: <session-id>
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`GET /stream HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Accept: text/event-stream
 Mcp-Session-Id: <session-id>`}
                     </pre>
@@ -648,7 +645,7 @@ Mcp-Session-Id: <session-id>`}
                     <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
 {`DELETE /stream HTTP/1.1
 Host: your-gateway.com
-Authorization: Bearer <your-api-key>
+Authorization: Bearer <access-token>
 Mcp-Session-Id: <session-id>`}
                     </pre>
                   </div>
@@ -672,29 +669,24 @@ Mcp-Session-Id: <session-id>`}
                 <div>
                   <h4 className="mb-2 font-medium">1. Bearer Token（推荐）</h4>
                   <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
-{`Authorization: Bearer <your-api-key>`}
+{`Authorization: Bearer <access-token>`}
                   </pre>
                 </div>
                 <div>
-                  <h4 className="mb-2 font-medium">2. 查询参数</h4>
-                  <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm">
-                    <code>?api_key=&lt;your-api-key&gt;</code>
-                  </pre>
-                </div>
-                <div>
-                  <h4 className="mb-2 font-medium">3. 会话 ID（Streamable HTTP）</h4>
+                  <h4 className="mb-2 font-medium">2. 会话 ID（Streamable HTTP）</h4>
                   <p className="text-sm text-muted-foreground">
-                    在建立会话后，可以使用 <code className="bg-muted px-1 py-0.5 rounded text-sm">Mcp-Session-Id</code> 头代替 API Key
+                    <code className="bg-muted px-1 py-0.5 rounded text-sm">Mcp-Session-Id</code> 是传输层会话标识，不能代替 Bearer Token
                   </p>
                   <pre className="mt-2 overflow-x-auto rounded-lg bg-muted p-4 text-sm">
-{`Mcp-Session-Id: <session-id>`}
+{`Authorization: Bearer <access-token>
+Mcp-Session-Id: <session-id>`}
                   </pre>
                 </div>
               </div>
               <div className="mt-6 rounded-lg bg-muted p-4">
-                <h4 className="mb-2 font-medium">获取 API Key</h4>
+                <h4 className="mb-2 font-medium">获取 access token</h4>
                 <p className="text-sm text-muted-foreground">
-                  在控制台的"API Keys"页面创建和管理您的 API Key。SaaS 模式下可以为不同 Workspace 创建独立的 Key。
+                  MCP 客户端应通过配置的 OAuth 授权服务器获取 access token，并让 token 的 audience/scope 匹配当前 Gateway 资源。
                 </p>
               </div>
             </CardContent>
@@ -725,7 +717,7 @@ Mcp-Session-Id: <session-id>`}
                       <ol className="space-y-2 text-sm text-muted-foreground list-decimal list-inside">
                         <li>在 Inspector 中选择传输类型：<strong>SSE</strong></li>
                         <li>URL：<code className="bg-muted px-1 py-0.5 rounded text-sm">http://your-gateway.com/sse</code></li>
-                        <li>在配置中添加自定义头：<code className="bg-muted px-1 py-0.5 rounded text-sm">Authorization: Bearer &lt;your-api-key&gt;</code></li>
+                        <li>在配置中添加自定义头：<code className="bg-muted px-1 py-0.5 rounded text-sm">Authorization: Bearer &lt;access-token&gt;</code></li>
                         <li>点击"Connect"连接</li>
                       </ol>
                     </div>
@@ -739,7 +731,7 @@ Mcp-Session-Id: <session-id>`}
                       <ol className="space-y-2 text-sm text-muted-foreground list-decimal list-inside">
                         <li>在 Inspector 中选择传输类型：<strong>Streamable HTTP</strong></li>
                         <li>URL：<code className="bg-muted px-1 py-0.5 rounded text-sm">http://your-gateway.com/stream</code></li>
-                        <li>在配置 → 自定义头中添加：<code className="bg-muted px-1 py-0.5 rounded text-sm">Authorization: Bearer &lt;your-api-key&gt;</code></li>
+                        <li>在配置 → 自定义头中添加：<code className="bg-muted px-1 py-0.5 rounded text-sm">Authorization: Bearer &lt;access-token&gt;</code></li>
                         <li>点击"Connect"，Inspector 会自动处理会话管理</li>
                       </ol>
                     </div>

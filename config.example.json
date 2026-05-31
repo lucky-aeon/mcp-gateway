@@ -4,7 +4,18 @@
     "Bind": "[::]:8080",
     "Auth": {
         "Enabled": true,
-        "ApiKey": "123456"
+        "AuthorizationServers": [
+            "https://auth.example.com"
+        ],
+        "TokenIssuer": "https://auth.example.com",
+        "TokenJWKSURI": "https://auth.example.com/.well-known/jwks.json",
+        "TokenAudience": "http://localhost:8080/stream",
+        "RequiredScopes": [
+            "mcp:read"
+        ],
+        "ScopesSupported": [
+            "mcp:read"
+        ]
     },
     "SessionGCInterval": 300000000000,
     "ProxySessionTimeout": 1500000000000,

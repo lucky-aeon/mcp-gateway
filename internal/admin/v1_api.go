@@ -1757,7 +1757,16 @@ func (h *Handler) handleV1UpdateSystemConfig(c echo.Context) error {
 		ProxySessionTimeoutSeconds *int    `json:"proxy_session_timeout_seconds"`
 		McpRetryCount              *int    `json:"mcp_retry_count"`
 		Auth                       *struct {
-			Enabled *bool `json:"enabled"`
+			Enabled                  *bool    `json:"enabled"`
+			AuthorizationServers     []string `json:"authorization_servers"`
+			TokenIssuer              *string  `json:"token_issuer"`
+			TokenJWKSURI             *string  `json:"token_jwks_uri"`
+			TokenIntrospectionURL    *string  `json:"token_introspection_url"`
+			TokenIntrospectionID     *string  `json:"token_introspection_id"`
+			TokenIntrospectionSecret *string  `json:"token_introspection_secret"`
+			TokenAudience            *string  `json:"token_audience"`
+			RequiredScopes           []string `json:"required_scopes"`
+			ScopesSupported          []string `json:"scopes_supported"`
 		} `json:"auth"`
 	}
 	if err := c.Bind(&req); err != nil {
@@ -1780,6 +1789,35 @@ func (h *Handler) handleV1UpdateSystemConfig(c echo.Context) error {
 	}
 	if req.Auth != nil && req.Auth.Enabled != nil {
 		h.cfg.Auth.Enabled = *req.Auth.Enabled
+	}
+	if req.Auth != nil {
+		if req.Auth.AuthorizationServers != nil {
+			h.cfg.Auth.AuthorizationServers = cleanStringList(req.Auth.AuthorizationServers)
+		}
+		if req.Auth.TokenIssuer != nil {
+			h.cfg.Auth.TokenIssuer = strings.TrimSpace(*req.Auth.TokenIssuer)
+		}
+		if req.Auth.TokenJWKSURI != nil {
+			h.cfg.Auth.TokenJWKSURI = strings.TrimSpace(*req.Auth.TokenJWKSURI)
+		}
+		if req.Auth.TokenIntrospectionURL != nil {
+			h.cfg.Auth.TokenIntrospectionURL = strings.TrimSpace(*req.Auth.TokenIntrospectionURL)
+		}
+		if req.Auth.TokenIntrospectionID != nil {
+			h.cfg.Auth.TokenIntrospectionID = strings.TrimSpace(*req.Auth.TokenIntrospectionID)
+		}
+		if req.Auth.TokenIntrospectionSecret != nil {
+			h.cfg.Auth.TokenIntrospectionSecret = *req.Auth.TokenIntrospectionSecret
+		}
+		if req.Auth.TokenAudience != nil {
+			h.cfg.Auth.TokenAudience = strings.TrimSpace(*req.Auth.TokenAudience)
+		}
+		if req.Auth.RequiredScopes != nil {
+			h.cfg.Auth.RequiredScopes = cleanStringList(req.Auth.RequiredScopes)
+		}
+		if req.Auth.ScopesSupported != nil {
+			h.cfg.Auth.ScopesSupported = cleanStringList(req.Auth.ScopesSupported)
+		}
 	}
 	if err := h.cfg.SaveConfig(); err != nil && h.cfg.CfgPath() != "" {
 		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -2247,11 +2285,31 @@ func (h *Handler) systemConfigView() map[string]interface{} {
 		"proxy_session_timeout_seconds": int(h.cfg.ProxySessionTimeout.Seconds()),
 		"mcp_retry_count":               h.cfg.McpServiceMgrConfig.GetMcpServiceRetryCount(),
 		"auth": map[string]interface{}{
-			"enabled":        h.cfg.GetAuthConfig().Enabled,
-			"mode":           h.authMode(),
-			"allow_register": h.cfg.GetAuthConfig().AllowRegister,
+			"enabled":                        h.cfg.GetAuthConfig().Enabled,
+			"mode":                           h.authMode(),
+			"allow_register":                 h.cfg.GetAuthConfig().AllowRegister,
+			"authorization_servers":          h.cfg.GetAuthConfig().AuthorizationServers,
+			"token_issuer":                   h.cfg.GetAuthConfig().TokenIssuer,
+			"token_jwks_uri":                 h.cfg.GetAuthConfig().TokenJWKSURI,
+			"token_introspection_url":        h.cfg.GetAuthConfig().TokenIntrospectionURL,
+			"token_introspection_id":         h.cfg.GetAuthConfig().TokenIntrospectionID,
+			"token_introspection_secret_set": h.cfg.GetAuthConfig().TokenIntrospectionSecret != "",
+			"token_audience":                 h.cfg.GetAuthConfig().TokenAudience,
+			"required_scopes":                h.cfg.GetAuthConfig().RequiredScopes,
+			"scopes_supported":               h.cfg.GetAuthConfig().ScopesSupported,
 		},
 	}
+}
+
+func cleanStringList(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func generateAPIKey() (string, error) {

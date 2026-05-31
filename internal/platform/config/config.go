@@ -132,18 +132,27 @@ func (c *Config) GetAuthConfig() *AuthConfig {
 }
 
 type AuthConfig struct {
-	Enabled               bool
-	Mode                  string
-	ApiKey                string
-	AllowRegister         bool
-	JWTSecret             string
-	AccessTokenTTLMinutes int
-	RefreshTokenTTLHours  int
-	MongoURI              string
-	MongoDatabase         string
-	AdminEmail            string
-	AdminPassword         string
-	AdminDisplayName      string
+	Enabled                  bool
+	Mode                     string
+	ApiKey                   string
+	AuthorizationServers     []string
+	TokenIssuer              string
+	TokenJWKSURI             string
+	TokenIntrospectionURL    string
+	TokenIntrospectionID     string
+	TokenIntrospectionSecret string
+	TokenAudience            string
+	RequiredScopes           []string
+	ScopesSupported          []string
+	AllowRegister            bool
+	JWTSecret                string
+	AccessTokenTTLMinutes    int
+	RefreshTokenTTLHours     int
+	MongoURI                 string
+	MongoDatabase            string
+	AdminEmail               string
+	AdminPassword            string
+	AdminDisplayName         string
 }
 
 func (c *AuthConfig) IsEnabled() bool {

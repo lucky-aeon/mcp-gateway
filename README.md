@@ -18,7 +18,7 @@ Supports two transport protocols (switchable at startup):
 - Get all MCP servers' tools
 - Streamable HTTP aggregated endpoint with session management via `Mcp-Session-Id` header
 - Dynamic capability aggregation (gateway only advertises capabilities that at least one downstream MCP supports)
-- API Key authentication (Bearer token / query param) and session-based authorization
+- MCP OAuth 2.1 resource server authentication with Protected Resource Metadata discovery
 
 ## Installation
 
@@ -58,9 +58,14 @@ The gateway reads `config.json` from the config directory (defaults to `./vm` wh
     "Bind": "[::]:8080",
     "Auth": {
         "Enabled": true,
-        "ApiKey": "123456"
+        "AuthorizationServers": ["https://auth.example.com"],
+        "TokenIssuer": "https://auth.example.com",
+        "TokenJWKSURI": "https://auth.example.com/.well-known/jwks.json",
+        "TokenAudience": "http://localhost:8080/stream",
+        "RequiredScopes": ["mcp:read"],
+        "ScopesSupported": ["mcp:read"]
     },
-    "GatewayProtocol": "sse",
+    "GatewayProtocol": "streamhttp",
     "McpServiceMgrConfig": {
         "McpServiceRetryCount": 3
     }
@@ -73,8 +78,15 @@ Key fields:
 | --------------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
 | `Bind`                                  | `[::]:8080`   | Server listen address.                                                             |
 | `GatewayProtocol`                       | `sse`         | Transport protocol: `sse` or `streamhttp`. Also overridable via `--protocol` flag. |
-| `Auth.Enabled`                          | `true`        | Whether to enforce API Key authentication.                                         |
-| `Auth.ApiKey`                           | `123456`      | API Key used by clients.                                                           |
+| `Auth.Enabled`                          | `true`        | Whether to enforce authentication. Set `false` for local unauthenticated MCP use.   |
+| `Auth.ApiKey`                           | `123456`      | Legacy single-key management API login token; not used as MCP auth.                |
+| `Auth.AuthorizationServers`             | required for MCP auth | OAuth authorization server issuer URLs advertised in MCP protected resource metadata. |
+| `Auth.TokenIssuer`                      | first authorization server | Expected `iss` claim for MCP OAuth access tokens.                                  |
+| `Auth.TokenJWKSURI`                     | discovered from issuer | JWKS URL used to verify JWT access tokens.                                         |
+| `Auth.TokenIntrospectionURL`            | empty         | RFC 7662 introspection endpoint for opaque access tokens. If set, introspection is used instead of JWKS. |
+| `Auth.TokenAudience`                    | request resource URL | Expected `aud` claim. Configure to the MCP resource indicator used by your authorization server. |
+| `Auth.RequiredScopes`                   | empty         | Scopes required for MCP requests and advertised in `WWW-Authenticate`.             |
+| `Auth.ScopesSupported`                  | empty         | Scopes advertised in Protected Resource Metadata.                                  |
 | `SessionGCInterval`                     | `10s`         | Interval for garbage-collecting idle proxy sessions.                               |
 | `ProxySessionTimeout`                   | `1m`          | Timeout for idle proxy sessions before GC.                                         |
 | `McpServiceMgrConfig.McpServiceRetryCount` | `3`        | Max retries for a failed MCP service before marking it `failed`.                   |
@@ -97,20 +109,22 @@ Valid values: `sse` (default) or `streamhttp`.
 
 ## Authentication
 
-When `Auth.Enabled` is `true`, every request must present a credential. The gateway looks up the key in the following order:
+When `Auth.Enabled` is `true`, every MCP protocol request must present an OAuth access token:
 
-1. `Authorization: Bearer <ApiKey>` header
-2. `?api_key=<ApiKey>` query parameter
-3. `?sessionId=<id>` query parameter (only valid after a session has been created)
-4. `Mcp-Session-Id: <id>` header (Streamable HTTP clients)
-5. `X-Session-Id: <id>` header
+```http
+Authorization: Bearer <access-token>
+```
 
-Typical patterns:
+The gateway no longer treats `api_key`, `sessionId`, `Mcp-Session-Id`, or `X-Session-Id` as authentication credentials. `Mcp-Session-Id` remains a transport session identifier and must be sent together with the Bearer token on authenticated Streamable HTTP requests.
 
-- **Long-lived client (agent / Inspector)**: configure `Authorization: Bearer <ApiKey>` once; the gateway also threads the session identifier in responses so subsequent requests can skip the API Key if desired.
-- **Browser / debug use**: append `?api_key=<ApiKey>` to URLs.
+For MCP OAuth discovery, the gateway exposes OAuth Protected Resource Metadata:
 
-`initialize` (the first request in a session) **must** carry the API Key, since no session exists yet.
+```http
+GET /.well-known/oauth-protected-resource
+GET /.well-known/oauth-protected-resource/stream
+```
+
+Unauthorized MCP requests return `401` with a `WWW-Authenticate: Bearer ... resource_metadata="..."` challenge. `Auth.AuthorizationServers` is required for authenticated MCP deployments. For local unauthenticated development, set `Auth.Enabled` to `false`.
 
 ## API
 
@@ -285,7 +299,7 @@ Content-Type: application/json
 ```http
 POST /stream HTTP/1.1
 Host: localhost:8080
-Authorization: Bearer 123456
+Authorization: Bearer <access-token>
 Accept: application/json, text/event-stream
 Content-Type: application/json
 
@@ -327,7 +341,7 @@ Keep the returned `Mcp-Session-Id` and send it on every subsequent request.
 ```http
 POST /stream HTTP/1.1
 Host: localhost:8080
-Authorization: Bearer 123456
+Authorization: Bearer <access-token>
 Content-Type: application/json
 Mcp-Session-Id: 7782f2f9-563c-4379-b961-df06e49e54c0
 
@@ -341,7 +355,7 @@ Response: `202 Accepted` (empty body).
 ```http
 POST /stream HTTP/1.1
 Host: localhost:8080
-Authorization: Bearer 123456
+Authorization: Bearer <access-token>
 Accept: application/json, text/event-stream
 Content-Type: application/json
 Mcp-Session-Id: 7782f2f9-563c-4379-b961-df06e49e54c0
@@ -372,7 +386,7 @@ Notifications (JSON-RPC messages without `id`) are answered with `202 Accepted` 
 ```http
 GET /stream HTTP/1.1
 Host: localhost:8080
-Authorization: Bearer 123456
+Authorization: Bearer <access-token>
 Accept: text/event-stream
 Mcp-Session-Id: 7782f2f9-563c-4379-b961-df06e49e54c0
 ```
@@ -386,7 +400,7 @@ Lines starting with `:` are SSE keepalive comments and can be ignored.
 ```http
 DELETE /stream HTTP/1.1
 Host: localhost:8080
-Authorization: Bearer 123456
+Authorization: Bearer <access-token>
 Mcp-Session-Id: 7782f2f9-563c-4379-b961-df06e49e54c0
 ```
 
@@ -407,5 +421,5 @@ The gateway forwards the request to the target MCP's `message` endpoint. Session
 
 1. In Inspector select **Transport Type**: `Streamable HTTP`.
 2. URL: `http://localhost:8080/stream`.
-3. Under *Configuration* → *Custom Headers*, add `Authorization: Bearer <ApiKey>`.
+3. Complete the OAuth flow in your authorization server and provide `Authorization: Bearer <access-token>`.
 4. Click **Connect**. The Inspector handles the `Mcp-Session-Id` exchange automatically.
