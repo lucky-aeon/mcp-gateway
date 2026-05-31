@@ -79,6 +79,13 @@ export function SetupPage() {
     }
   }
 
+  const authProvider = (form?.auth.authorization_servers?.length || 0) > 0 ? 'external' : 'internal'
+  const listValue = (items?: string[]) => (items || []).join('\n')
+  const setAuthField = <K extends keyof SystemConfig['auth']>(key: K, value: SystemConfig['auth'][K]) => {
+    setForm((v) => v ? { ...v, auth: { ...v.auth, [key]: value } } : v)
+  }
+  const splitList = (value: string) => value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)
+
   async function handleSyncSource(sourceId: string) {
     setSyncingSource(sourceId)
     await runAction(
@@ -317,14 +324,115 @@ export function SetupPage() {
               <CardTitle>认证设置</CardTitle>
               <CardDescription>API 认证和授权配置</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between rounded-xl border bg-muted/30 p-4">
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-4">
                 <div className="space-y-0.5">
-                  <Label className="text-base">启用 API 密钥认证</Label>
-                  <p className="text-sm text-muted-foreground">要求所有请求携带有效的 API 密钥</p>
+                  <Label className="text-base">启用认证</Label>
+                  <p className="text-sm text-muted-foreground">要求管理 API 和 MCP 请求携带有效 Bearer token</p>
                 </div>
-                <Switch checked={form.auth.enabled} onCheckedChange={(checked) => setForm((v) => v ? { ...v, auth: { ...v.auth, enabled: checked } } : v)} />
+                <Switch checked={form.auth.enabled} onCheckedChange={(checked) => setAuthField('enabled', checked)} />
               </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>账号模式</Label>
+                  <Select value={form.auth.mode} onValueChange={(value) => setAuthField('mode', value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="saas">SaaS 账号体系</SelectItem>
+                      <SelectItem value="single-key">Single Key</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-4">
+                  <div className="space-y-0.5">
+                    <Label>允许注册</Label>
+                    <p className="text-sm text-muted-foreground">开放账号注册入口</p>
+                  </div>
+                  <Switch checked={form.auth.allow_register} disabled={form.auth.mode !== 'saas'} onCheckedChange={(checked) => setAuthField('allow_register', checked)} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>MCP OAuth 登录方式</Label>
+                <Select
+                  value={authProvider}
+                  onValueChange={(value) => {
+                    if (value === 'internal') {
+                      setForm((v) => v ? {
+                        ...v,
+                        auth: {
+                          ...v.auth,
+                          mode: 'saas',
+                          authorization_servers: [],
+                          token_issuer: '',
+                          token_jwks_uri: '',
+                          token_introspection_url: '',
+                          token_introspection_id: '',
+                          token_audience: '',
+                          required_scopes: [],
+                          scopes_supported: [],
+                        },
+                      } : v)
+                    } else {
+                      setAuthField('authorization_servers', form.auth.authorization_servers?.length ? form.auth.authorization_servers : [''])
+                    }
+                  }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="internal">内置 Gateway 账号密码登录</SelectItem>
+                    <SelectItem value="external">外部 OAuth 服务</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {authProvider === 'internal' ? (
+                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  当前会通过 MCP Gateway 自身账号体系登录，客户端发现到的授权服务为当前 Gateway 地址，并使用 <span className="font-mono">/oauth/authorize</span> 与 <span className="font-mono">/oauth/token</span>。
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="authorization-servers">授权服务器 Issuer</Label>
+                    <Textarea
+                      id="authorization-servers"
+                      value={listValue(form.auth.authorization_servers)}
+                      onChange={(e) => setAuthField('authorization_servers', splitList(e.target.value))}
+                      rows={2}
+                      placeholder="https://auth.example.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="token-issuer">Token Issuer</Label>
+                    <Input id="token-issuer" value={form.auth.token_issuer || ''} onChange={(e) => setAuthField('token_issuer', e.target.value)} placeholder="https://auth.example.com" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jwks-uri">JWKS URI</Label>
+                    <Input id="jwks-uri" value={form.auth.token_jwks_uri || ''} onChange={(e) => setAuthField('token_jwks_uri', e.target.value)} placeholder="https://auth.example.com/.well-known/jwks.json" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="introspection-url">Introspection URL</Label>
+                    <Input id="introspection-url" value={form.auth.token_introspection_url || ''} onChange={(e) => setAuthField('token_introspection_url', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="introspection-id">Introspection Client ID</Label>
+                    <Input id="introspection-id" value={form.auth.token_introspection_id || ''} onChange={(e) => setAuthField('token_introspection_id', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="token-audience">Token Audience</Label>
+                    <Input id="token-audience" value={form.auth.token_audience || ''} onChange={(e) => setAuthField('token_audience', e.target.value)} placeholder="http://localhost:8080/stream" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="required-scopes">Required Scopes</Label>
+                    <Input id="required-scopes" value={(form.auth.required_scopes || []).join(' ')} onChange={(e) => setAuthField('required_scopes', e.target.value.split(/\s+/).filter(Boolean))} placeholder="mcp:read" />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="supported-scopes">Scopes Supported</Label>
+                    <Input id="supported-scopes" value={(form.auth.scopes_supported || []).join(' ')} onChange={(e) => setAuthField('scopes_supported', e.target.value.split(/\s+/).filter(Boolean))} placeholder="mcp:read mcp:write" />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

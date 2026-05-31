@@ -198,6 +198,11 @@ func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err erro
 		}
 		s.mu.RUnlock()
 
+		if len(mcpNames) == 0 {
+			s.sendErrorResponse(request.ID, fmt.Errorf("no MCP services available"))
+			return nil
+		}
+
 		for _, mcpName := range mcpNames {
 			err = s.sendToMcp(xl, mcpName, request, content)
 			if err != nil {

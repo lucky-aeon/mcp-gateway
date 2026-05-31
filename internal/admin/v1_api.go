@@ -1061,30 +1061,7 @@ func (h *Handler) handleV1StartService(c echo.Context) error {
 				Workspace: wsID,
 			}
 			if dbServer.Config != nil {
-				if url, ok := dbServer.Config["url"].(string); ok {
-					cfg.URL = url
-				}
-				if cmd, ok := dbServer.Config["command"].(string); ok {
-					cfg.Command = cmd
-				}
-				if args, ok := dbServer.Config["args"].([]interface{}); ok {
-					for _, arg := range args {
-						if argStr, ok := arg.(string); ok {
-							cfg.Args = append(cfg.Args, argStr)
-						}
-					}
-				}
-				if env, ok := dbServer.Config["env"].(map[string]interface{}); ok {
-					cfg.Env = make(map[string]string)
-					for k, v := range env {
-						if vStr, ok := v.(string); ok {
-							cfg.Env[k] = vStr
-						}
-					}
-				}
-				if gatewayProtocol, ok := dbServer.Config["gateway_protocol"].(string); ok {
-					cfg.GatewayProtocol = gatewayProtocol
-				}
+				cfg = serviceConfigFromMap(dbServer.Config, wsID)
 			}
 			found = true
 		}
@@ -1758,6 +1735,8 @@ func (h *Handler) handleV1UpdateSystemConfig(c echo.Context) error {
 		McpRetryCount              *int    `json:"mcp_retry_count"`
 		Auth                       *struct {
 			Enabled                  *bool    `json:"enabled"`
+			Mode                     *string  `json:"mode"`
+			AllowRegister            *bool    `json:"allow_register"`
 			AuthorizationServers     []string `json:"authorization_servers"`
 			TokenIssuer              *string  `json:"token_issuer"`
 			TokenJWKSURI             *string  `json:"token_jwks_uri"`
@@ -1791,6 +1770,12 @@ func (h *Handler) handleV1UpdateSystemConfig(c echo.Context) error {
 		h.cfg.Auth.Enabled = *req.Auth.Enabled
 	}
 	if req.Auth != nil {
+		if req.Auth.Mode != nil && (*req.Auth.Mode == "single-key" || *req.Auth.Mode == "saas") {
+			h.cfg.Auth.Mode = *req.Auth.Mode
+		}
+		if req.Auth.AllowRegister != nil {
+			h.cfg.Auth.AllowRegister = *req.Auth.AllowRegister
+		}
 		if req.Auth.AuthorizationServers != nil {
 			h.cfg.Auth.AuthorizationServers = cleanStringList(req.Auth.AuthorizationServers)
 		}

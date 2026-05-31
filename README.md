@@ -80,7 +80,8 @@ Key fields:
 | `GatewayProtocol`                       | `sse`         | Transport protocol: `sse` or `streamhttp`. Also overridable via `--protocol` flag. |
 | `Auth.Enabled`                          | `true`        | Whether to enforce authentication. Set `false` for local unauthenticated MCP use.   |
 | `Auth.ApiKey`                           | `123456`      | Legacy single-key management API login token; not used as MCP auth.                |
-| `Auth.AuthorizationServers`             | required for MCP auth | OAuth authorization server issuer URLs advertised in MCP protected resource metadata. |
+| `Auth.Mode`                             | `single-key`  | `single-key` or `saas`. SaaS mode uses MCP Gateway accounts and password login.      |
+| `Auth.AuthorizationServers`             | empty         | Optional external OAuth issuer URLs. Empty in SaaS mode means the gateway advertises itself as the authorization server. |
 | `Auth.TokenIssuer`                      | first authorization server | Expected `iss` claim for MCP OAuth access tokens.                                  |
 | `Auth.TokenJWKSURI`                     | discovered from issuer | JWKS URL used to verify JWT access tokens.                                         |
 | `Auth.TokenIntrospectionURL`            | empty         | RFC 7662 introspection endpoint for opaque access tokens. If set, introspection is used instead of JWKS. |
@@ -109,7 +110,7 @@ Valid values: `sse` (default) or `streamhttp`.
 
 ## Authentication
 
-When `Auth.Enabled` is `true`, every MCP protocol request must present an OAuth access token:
+When `Auth.Enabled` is `true`, every MCP protocol request must present a Bearer token:
 
 ```http
 Authorization: Bearer <access-token>
@@ -124,7 +125,26 @@ GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/stream
 ```
 
-Unauthorized MCP requests return `401` with a `WWW-Authenticate: Bearer ... resource_metadata="..."` challenge. `Auth.AuthorizationServers` is required for authenticated MCP deployments. For local unauthenticated development, set `Auth.Enabled` to `false`.
+Unauthorized MCP requests return `401` with a `WWW-Authenticate: Bearer ... resource_metadata="..."` challenge when OAuth discovery is available. For local unauthenticated development, set `Auth.Enabled` to `false`.
+
+In `Auth.Mode = "saas"` with no external `Auth.AuthorizationServers`, the gateway uses its own account system for MCP login. Discovery advertises the gateway origin as the authorization server and exposes:
+
+```http
+GET /.well-known/oauth-authorization-server
+POST /oauth/token
+POST /oauth/register
+```
+
+`/oauth/token` accepts form-encoded `grant_type=password` with `username`/`password` and returns the same gateway JWT used by `/api/v1/auth/login`. Configure `Auth.AuthorizationServers` only when you want Keycloak, Auth0, or another external OAuth provider.
+
+Browser-based MCP clients can also use the advertised authorization endpoint:
+
+```http
+GET /oauth/authorize
+```
+
+The built-in authorization endpoint renders a Gateway account login form and completes the OAuth authorization-code flow, including PKCE.
+`/oauth/register` implements minimal dynamic client registration for clients such as MCP Inspector.
 
 ## API
 

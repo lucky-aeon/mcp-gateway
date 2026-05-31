@@ -7,8 +7,25 @@ import (
 	"time"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/runtime"
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+func TestSessionManagerCreateSessionAllowsEmptyWorkspace(t *testing.T) {
+	manager := NewSessionManager(func() []*runtime.McpService {
+		return nil
+	}, CleanupConfig{})
+
+	session, err := manager.CreateSession(xlog.NewLogger("test-empty-session"))
+
+	if err != nil {
+		t.Fatalf("CreateSession should allow empty service list: %v", err)
+	}
+	if session == nil {
+		t.Fatal("CreateSession returned nil session")
+	}
+	defer session.Close()
+}
 
 func TestSession(t *testing.T) {
 	xl := xlog.NewLogger("test")

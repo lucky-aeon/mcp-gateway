@@ -4,18 +4,16 @@
     "Bind": "[::]:8080",
     "Auth": {
         "Enabled": true,
-        "AuthorizationServers": [
-            "https://auth.example.com"
-        ],
-        "TokenIssuer": "https://auth.example.com",
-        "TokenJWKSURI": "https://auth.example.com/.well-known/jwks.json",
-        "TokenAudience": "http://localhost:8080/stream",
-        "RequiredScopes": [
-            "mcp:read"
-        ],
-        "ScopesSupported": [
-            "mcp:read"
-        ]
+        "Mode": "saas",
+        "AllowRegister": true,
+        "JWTSecret": "gateway-dev-secret",
+        "AccessTokenTTLMinutes": 120,
+        "RefreshTokenTTLHours": 720,
+        "MongoURI": "mongodb://127.0.0.1:27017",
+        "MongoDatabase": "mcp_gateway",
+        "AdminEmail": "admin@gateway.local",
+        "AdminPassword": "admin123456",
+        "AdminDisplayName": "Gateway Admin"
     },
     "SessionGCInterval": 300000000000,
     "ProxySessionTimeout": 1500000000000,

@@ -98,6 +98,47 @@ Content-Type: application/json
 }
 ```
 
+### 4. MCP OAuth 发现与账号密码换 Token
+
+`saas` 模式下如果没有配置外部 `AuthorizationServers`，Gateway 会把自己声明为 MCP 授权服务器：
+
+```http
+GET /.well-known/oauth-protected-resource/stream
+GET /.well-known/oauth-authorization-server
+```
+
+支持用 MCP Gateway 账号密码从 OAuth token endpoint 换取内部 JWT：
+
+```bash
+curl -X POST http://localhost:8080/oauth/token \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'grant_type=password' \
+  -d 'username=user@example.com' \
+  -d 'password=your-password'
+```
+
+返回：
+
+```json
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "rt_...",
+  "token_type": "Bearer",
+  "expires_in": 7200
+}
+```
+
+对于走浏览器 OAuth 登录的 MCP 客户端，Gateway 还提供：
+
+```http
+GET /oauth/authorize
+POST /oauth/authorize
+POST /oauth/register
+```
+
+该端点会展示 MCP Gateway 账号密码登录页，并完成 OAuth authorization code + PKCE 流程。
+`/oauth/register` 提供最小动态客户端注册能力，供 MCP Inspector 等客户端获取 `client_id`。
+
 ## Cherry Studio 配置
 
 ### 方式 1：手动配置 Token（推荐）

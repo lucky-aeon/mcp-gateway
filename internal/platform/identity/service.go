@@ -315,13 +315,37 @@ func (s *Service) AuthenticatePassword(ctx context.Context, email, password stri
 	if err := s.store.CreateRefreshToken(ctx, refresh); err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{
-		"mode":          "saas",
-		"token_type":    "Bearer",
-		"token":         accessToken,
-		"refresh_token": refreshRaw,
-		"user":          s.accountView(account),
-	}, nil
+	return s.tokenResponse(account, accessToken, refreshRaw), nil
+}
+
+func (s *Service) IssueTokenForAccount(ctx context.Context, accountID string) (map[string]interface{}, error) {
+	if !s.IsSaaS() || s.store == nil {
+		return nil, ErrUnauthorized
+	}
+	account, err := s.store.FindAccountByID(ctx, accountID)
+	if err != nil || account.Status != "active" {
+		return nil, ErrUnauthorized
+	}
+	accessToken, err := s.issueAccessToken(account)
+	if err != nil {
+		return nil, err
+	}
+	refreshRaw, refreshHash, err := newOpaqueSecret("rt_")
+	if err != nil {
+		return nil, err
+	}
+	refresh := &RefreshToken{
+		ID:         uuid.NewString(),
+		AccountID:  account.ID,
+		TokenHash:  refreshHash,
+		ExpiresAt:  time.Now().UTC().Add(s.refreshTokenTTL),
+		CreatedAt:  time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+	}
+	if err := s.store.CreateRefreshToken(ctx, refresh); err != nil {
+		return nil, err
+	}
+	return s.tokenResponse(account, accessToken, refreshRaw), nil
 }
 
 func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (map[string]interface{}, error) {
@@ -341,11 +365,28 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return nil, err
 	}
 	return map[string]interface{}{
-		"mode":       "saas",
-		"token_type": "Bearer",
-		"token":      accessToken,
-		"user":       s.accountView(account),
+		"mode":         "saas",
+		"token_type":   "Bearer",
+		"token":        accessToken,
+		"access_token": accessToken,
+		"expires_in":   int(s.accessTokenTTL.Seconds()),
+		"user":         s.accountView(account),
 	}, nil
+}
+
+func (s *Service) tokenResponse(account *Account, accessToken, refreshToken string) map[string]interface{} {
+	resp := map[string]interface{}{
+		"mode":         "saas",
+		"token_type":   "Bearer",
+		"token":        accessToken,
+		"access_token": accessToken,
+		"expires_in":   int(s.accessTokenTTL.Seconds()),
+		"user":         s.accountView(account),
+	}
+	if refreshToken != "" {
+		resp["refresh_token"] = refreshToken
+	}
+	return resp
 }
 
 func (s *Service) Logout(ctx context.Context, refreshToken string) error {

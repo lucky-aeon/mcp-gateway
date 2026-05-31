@@ -165,7 +165,63 @@ func TestProtectedResourceMetadata(t *testing.T) {
 	assert.Equal(t, []any{"mcp:read", "mcp:write"}, resp["scopes_supported"])
 }
 
-func TestMCPAuthRequiresAuthorizationServerConfig(t *testing.T) {
+func TestProtectedResourceMetadataUsesGatewayAsAuthorizationServerInSaaSMode(t *testing.T) {
+	h := &Handler{
+		cfg: config.Config{
+			Auth: &config.AuthConfig{
+				Enabled: true,
+				Mode:    "saas",
+			},
+		},
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/stream", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "gateway.example.com")
+	rec := httptest.NewRecorder()
+
+	err := h.handleProtectedResourceMetadata(e.NewContext(req, rec))
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]any
+	assert.NoError(t, json.NewDecoder(strings.NewReader(rec.Body.String())).Decode(&resp))
+	assert.Equal(t, "https://gateway.example.com/stream", resp["resource"])
+	assert.Equal(t, []any{"https://gateway.example.com"}, resp["authorization_servers"])
+}
+
+func TestAuthorizationServerMetadataForInternalSaaSAuth(t *testing.T) {
+	h := &Handler{
+		cfg: config.Config{
+			Auth: &config.AuthConfig{
+				Enabled: true,
+				Mode:    "saas",
+			},
+		},
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "gateway.example.com")
+	rec := httptest.NewRecorder()
+
+	err := h.handleAuthorizationServerMetadata(e.NewContext(req, rec))
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]any
+	assert.NoError(t, json.NewDecoder(strings.NewReader(rec.Body.String())).Decode(&resp))
+	assert.Equal(t, "https://gateway.example.com", resp["issuer"])
+	assert.Equal(t, "https://gateway.example.com/oauth/authorize", resp["authorization_endpoint"])
+	assert.Equal(t, "https://gateway.example.com/oauth/token", resp["token_endpoint"])
+	assert.Equal(t, "https://gateway.example.com/oauth/register", resp["registration_endpoint"])
+	assert.Equal(t, []any{"authorization_code", "password", "refresh_token"}, resp["grant_types_supported"])
+	assert.Equal(t, []any{"code"}, resp["response_types_supported"])
+}
+
+func TestMCPAuthRejectsInvalidTokenWithoutAuthorizationServerConfig(t *testing.T) {
 	h := &Handler{
 		cfg: config.Config{
 			Auth: &config.AuthConfig{Enabled: true},
@@ -182,5 +238,6 @@ func TestMCPAuthRequiresAuthorizationServerConfig(t *testing.T) {
 	err := handler(e.NewContext(req, rec))
 
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Empty(t, rec.Header().Get(echo.HeaderWWWAuthenticate))
 }

@@ -14,11 +14,12 @@ type Handler struct {
 	services workspaces.ServiceManagerI
 	cfg      config.Config
 	auth     *identity.Service
+	oauth    *internalOAuthServer
 }
 
 // NewHandler 构造一个 gateway Handler。
 func NewHandler(services workspaces.ServiceManagerI, cfg config.Config, auth *identity.Service) *Handler {
-	return &Handler{services: services, cfg: cfg, auth: auth}
+	return &Handler{services: services, cfg: cfg, auth: auth, oauth: newInternalOAuthServer()}
 }
 
 // Register 向 Echo 注册 MCP 协议入口：
@@ -30,6 +31,11 @@ func (h *Handler) Register(e *echo.Echo) {
 	auth := h.mcpAuthMiddleware
 	e.GET("/.well-known/oauth-protected-resource", h.handleProtectedResourceMetadata)
 	e.GET("/.well-known/oauth-protected-resource/*", h.handleProtectedResourceMetadata)
+	e.GET(authorizationServerMetadataPath, h.handleAuthorizationServerMetadata)
+	e.GET("/oauth/authorize", h.handleOAuthAuthorize)
+	e.POST("/oauth/authorize", h.handleOAuthAuthorize)
+	e.POST("/oauth/register", h.handleOAuthRegister)
+	e.POST("/oauth/token", h.handleOAuthToken)
 
 	if h.cfg.IsStreamHTTP() {
 		e.GET("/:service", auth(h.handleStreamHTTP))

@@ -66,6 +66,21 @@ func TestHandleV1CreateWorkspace(t *testing.T) {
 	assert.NotEmpty(t, data["id"])
 }
 
+func TestServiceConfigFromMapAcceptsMongoPrimitiveValues(t *testing.T) {
+	cfg := serviceConfigFromMap(map[string]interface{}{
+		"command":          "uvx",
+		"args":             primitive.A{"mcp-server-time", "--local-timezone=Asia/Shanghai"},
+		"env":              primitive.M{"TZ": "Asia/Shanghai"},
+		"gateway_protocol": "streamhttp",
+	}, "default")
+
+	assert.Equal(t, "default", cfg.Workspace)
+	assert.Equal(t, "uvx", cfg.Command)
+	assert.Equal(t, []string{"mcp-server-time", "--local-timezone=Asia/Shanghai"}, cfg.Args)
+	assert.Equal(t, map[string]string{"TZ": "Asia/Shanghai"}, cfg.Env)
+	assert.Equal(t, "streamhttp", cfg.GatewayProtocol)
+}
+
 func TestV1AuthMiddlewareRequiresBearer(t *testing.T) {
 	e := echo.New()
 	h, _ := createTestServerManager()

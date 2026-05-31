@@ -60,11 +60,13 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 		m.CloseSession(xl, sessionId)
 	})
 
+	runningServices := 0
 	for _, mcpService := range m.listServices() {
 		if mcpService.GetStatus() != runtime.Running {
 			xl.Warnf("service %s is not running", mcpService.Name)
 			continue
 		}
+		runningServices++
 
 		var err error
 		if mcpService.IsSSE() {
@@ -77,7 +79,7 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 			return nil, fmt.Errorf("failed to subscribe mcpServer[%s]", mcpService.Name)
 		}
 	}
-	if !session.IsReady() {
+	if runningServices > 0 && !session.IsReady() {
 		return nil, fmt.Errorf("create session %s failed", session.Id)
 	}
 	m.sessionsMutex.Lock()

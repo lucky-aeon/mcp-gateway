@@ -156,6 +156,12 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	if s.Status == Failed {
 		return fmt.Errorf("服务 %s 已失败，无法启动", s.Name)
 	}
+	if strings.TrimSpace(s.Config.Command) == "" {
+		s.LastError = "command is required"
+		s.FailureReason = "Invalid service configuration"
+		s.Status = Failed
+		return fmt.Errorf("service %s command is required", s.Name)
+	}
 
 	s.Status = Starting
 	s.LastStartedAt = time.Now()
