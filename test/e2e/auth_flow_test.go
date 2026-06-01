@@ -47,6 +47,10 @@ type MCPResponse struct {
 
 // TestAuthenticationFlow 测试完整的认证流程：注册 → 登录 → 管理API → MCP协议
 func TestAuthenticationFlow(t *testing.T) {
+	if os.Getenv("MCP_GATEWAY_URL") == "" {
+		t.Skip("set MCP_GATEWAY_URL to run external gateway authentication flow")
+	}
+
 	email := fmt.Sprintf("e2e_%d@example.com", time.Now().UnixNano())
 	password := "test123456"
 	displayName := "E2E Test User"
@@ -107,6 +111,10 @@ func TestAuthenticationFlow(t *testing.T) {
 
 // TestUnauthenticated 测试未认证请求被正确拒绝
 func TestUnauthenticated(t *testing.T) {
+	if os.Getenv("MCP_GATEWAY_URL") == "" {
+		t.Skip("set MCP_GATEWAY_URL to run external gateway unauthenticated flow")
+	}
+
 	t.Run("MCPWithoutToken", func(t *testing.T) {
 		req := newRequest(t, "POST", baseURL+"/stream", mcpInitializePayload(), "")
 		resp := doRequest(t, req)
