@@ -84,6 +84,20 @@ export type LogEntry = {
   level: 'info' | 'warn' | 'error' | 'debug'
   message: string
   source?: string
+  kind?: string
+  summary?: string
+  action?: string
+  resource_type?: string
+  resource_id?: string
+  workspace_id?: string
+  session_id?: string
+  actor_id?: string
+  method?: string
+  request_id?: string
+  tool_name?: string
+  mcp_name?: string
+  transport?: string
+  duration_ms?: number
   metadata?: Record<string, unknown>
 }
 

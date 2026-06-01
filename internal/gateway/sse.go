@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/httpx"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/oplog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
 )
@@ -23,6 +24,7 @@ func (h *Handler) handleGlobalSSE(c echo.Context) error {
 		xl.Infof("No session ID provided, creating new session")
 		if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
 			xl.Errorf("restore workspace services failed: %v", err)
+			h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.create_failed", workspace, "", "session create failed", err.Error(), nil)
 			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		// 没有sessionId，生成一个返回出
@@ -32,9 +34,11 @@ func (h *Handler) handleGlobalSSE(c echo.Context) error {
 			Session:   querySessionId,
 		})
 		if err != nil {
+			h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.create_failed", workspace, "", "session create failed", err.Error(), nil)
 			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		xl.Infof("Created new session: %s", session.Id)
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, "session.connect", workspace, session.Id, "SSE session connected", "", map[string]interface{}{"transport": "sse", "connection": "created"})
 		// 302重定向到 /sse?sessionId={session.Id}
 		if workspace != "" {
 			return c.Redirect(http.StatusFound, fmt.Sprintf("/sse?sessionId=%s&workspaceId=%s", session.Id, workspace))
@@ -51,8 +55,10 @@ func (h *Handler) handleGlobalSSE(c echo.Context) error {
 		Session:   querySessionId,
 	})
 	if !exists {
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.stream_failed", workspace, querySessionId, "session stream failed", "session not found", map[string]interface{}{"transport": "sse"})
 		return c.String(http.StatusNotFound, "session not found")
 	}
+	h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, "session.connect", workspace, querySessionId, "SSE session connected", "", map[string]interface{}{"transport": "sse", "connection": "attached"})
 
 	// 返回endpoint事件
 	c.Response().WriteHeader(http.StatusOK)

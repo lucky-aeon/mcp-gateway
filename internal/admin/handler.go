@@ -6,6 +6,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/oplog"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
 )
@@ -17,6 +18,7 @@ type Handler struct {
 	services workspaces.ServiceManagerI
 	cfg      *config.Config
 	auth     *identity.Service
+	oplog    oplog.Store
 	state    *controlPlaneState
 	market   *marketStore
 	oauth    *mcpOAuthFlowStore
@@ -24,15 +26,20 @@ type Handler struct {
 }
 
 // NewHandler 构造一个 admin Handler。
-func NewHandler(services workspaces.ServiceManagerI, cfg *config.Config, auth *identity.Service) *Handler {
+func NewHandler(services workspaces.ServiceManagerI, cfg *config.Config, auth *identity.Service, stores ...oplog.Store) *Handler {
 	market := newMarketStore()
 	for _, adapter := range defaultMarketAdapters(nil) {
 		market.registerAdapter(adapter)
+	}
+	store := oplog.Store(oplog.NoopStore{})
+	if len(stores) > 0 && stores[0] != nil {
+		store = stores[0]
 	}
 	return &Handler{
 		services: services,
 		cfg:      cfg,
 		auth:     auth,
+		oplog:    store,
 		state:    newControlPlaneState(),
 		market:   market,
 		oauth:    newMCPOAuthFlowStore(),

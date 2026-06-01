@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -18,6 +19,7 @@ var (
 	globalZapLogger *zap.Logger
 	globalMutex     sync.RWMutex
 	headerFormat    string = DefaultHeader
+	sinkDispatcher  *asyncSinkDispatcher
 )
 
 // Logger defines the logging interface
@@ -38,9 +40,22 @@ type Logger interface {
 }
 
 type zapLogger struct {
-	zap   *zap.Logger
-	sugar *zap.SugaredLogger
-	name  string
+	zap    *zap.Logger
+	sugar  *zap.SugaredLogger
+	name   string
+	fields map[string]interface{}
+}
+
+type Entry struct {
+	Timestamp time.Time
+	Level     string
+	Logger    string
+	Message   string
+	Fields    map[string]interface{}
+}
+
+type Sink interface {
+	Write(Entry)
 }
 
 // Initialize global zap logger
@@ -62,6 +77,9 @@ func initGlobalLogger() {
 
 	globalMutex.Lock()
 	globalZapLogger = logger
+	if sinkDispatcher == nil {
+		sinkDispatcher = newAsyncSinkDispatcher(1024)
+	}
 	globalMutex.Unlock()
 }
 
@@ -74,34 +92,42 @@ func SetHeader(name string) {
 // Logger interface implementation
 func (l *zapLogger) Debug(args ...interface{}) {
 	l.sugar.Debug(args...)
+	l.emit("debug", fmt.Sprint(args...))
 }
 
 func (l *zapLogger) Debugf(template string, args ...interface{}) {
 	l.sugar.Debugf(template, args...)
+	l.emit("debug", fmt.Sprintf(template, args...))
 }
 
 func (l *zapLogger) Info(args ...interface{}) {
 	l.sugar.Info(args...)
+	l.emit("info", fmt.Sprint(args...))
 }
 
 func (l *zapLogger) Infof(template string, args ...interface{}) {
 	l.sugar.Infof(template, args...)
+	l.emit("info", fmt.Sprintf(template, args...))
 }
 
 func (l *zapLogger) Warn(args ...interface{}) {
 	l.sugar.Warn(args...)
+	l.emit("warn", fmt.Sprint(args...))
 }
 
 func (l *zapLogger) Warnf(template string, args ...interface{}) {
 	l.sugar.Warnf(template, args...)
+	l.emit("warn", fmt.Sprintf(template, args...))
 }
 
 func (l *zapLogger) Error(args ...interface{}) {
 	l.sugar.Error(args...)
+	l.emit("error", fmt.Sprint(args...))
 }
 
 func (l *zapLogger) Errorf(template string, args ...interface{}) {
 	l.sugar.Errorf(template, args...)
+	l.emit("error", fmt.Sprintf(template, args...))
 }
 
 func (l *zapLogger) Fatal(args ...interface{}) {
@@ -114,10 +140,13 @@ func (l *zapLogger) Fatalf(template string, args ...interface{}) {
 
 func (l *zapLogger) With(key string, value interface{}) Logger {
 	newLogger := l.zap.With(zap.Any(key, value))
+	fields := cloneFields(l.fields)
+	fields[key] = value
 	return &zapLogger{
-		zap:   newLogger,
-		sugar: newLogger.Sugar(),
-		name:  l.name,
+		zap:    newLogger,
+		sugar:  newLogger.Sugar(),
+		name:   l.name,
+		fields: fields,
 	}
 }
 
@@ -128,10 +157,15 @@ func (l *zapLogger) WithFields(fields map[string]interface{}) Logger {
 	}
 
 	newLogger := l.zap.With(zapFields...)
+	fieldsCopy := cloneFields(l.fields)
+	for k, v := range fields {
+		fieldsCopy[k] = v
+	}
 	return &zapLogger{
-		zap:   newLogger,
-		sugar: newLogger.Sugar(),
-		name:  l.name,
+		zap:    newLogger,
+		sugar:  newLogger.Sugar(),
+		name:   l.name,
+		fields: fieldsCopy,
 	}
 }
 
@@ -146,9 +180,10 @@ func NewLogger(name string) Logger {
 	globalMutex.RUnlock()
 
 	return &zapLogger{
-		zap:   namedLogger,
-		sugar: namedLogger.Sugar(),
-		name:  name,
+		zap:    namedLogger,
+		sugar:  namedLogger.Sugar(),
+		name:   name,
+		fields: map[string]interface{}{},
 	}
 }
 
@@ -158,9 +193,10 @@ func WithChildName(name string, parent Logger) Logger {
 		childName := fmt.Sprintf("%s-%s", zl.name, name)
 
 		return &zapLogger{
-			zap:   childZap,
-			sugar: childZap.Sugar(),
-			name:  childName,
+			zap:    childZap,
+			sugar:  childZap.Sugar(),
+			name:   childName,
+			fields: cloneFields(zl.fields),
 		}
 	}
 
@@ -203,6 +239,18 @@ func SetupFileLogging(baseDir, fileName string) error {
 	return nil
 }
 
+func RegisterSink(sink Sink) {
+	if sink == nil {
+		return
+	}
+	globalMutex.Lock()
+	if sinkDispatcher == nil {
+		sinkDispatcher = newAsyncSinkDispatcher(1024)
+	}
+	sinkDispatcher.add(sink)
+	globalMutex.Unlock()
+}
+
 // Get the underlying zap logger for advanced usage
 func GetZapLogger() *zap.Logger {
 	globalMutex.RLock()
@@ -220,4 +268,31 @@ func Sync() error {
 		return logger.Sync()
 	}
 	return nil
+}
+
+func (l *zapLogger) emit(level, message string) {
+	if l == nil {
+		return
+	}
+	globalMutex.RLock()
+	dispatcher := sinkDispatcher
+	globalMutex.RUnlock()
+	if dispatcher == nil {
+		return
+	}
+	dispatcher.publish(Entry{
+		Timestamp: time.Now().UTC(),
+		Level:     level,
+		Logger:    l.name,
+		Message:   message,
+		Fields:    cloneFields(l.fields),
+	})
+}
+
+func cloneFields(fields map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		out[k] = v
+	}
+	return out
 }

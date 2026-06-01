@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/httpx"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/oplog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/sessions"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
@@ -104,11 +105,15 @@ func (h *Handler) handleGlobalStreamHTTP(c echo.Context) error {
 func (h *Handler) streamHTTPHandlePost(c echo.Context, xl xlog.Logger, workspace string) error {
 	body, err := io.ReadAll(c.Request().Body)
 	if err != nil {
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.request_failed", workspace, c.Request().Header.Get(headerMcpSessionID), "Failed to read MCP request", err.Error(), map[string]interface{}{"transport": "streamhttp"})
 		return writeJSONRPCError(c, http.StatusBadRequest, nil, -32700, "failed to read request body", err.Error())
 	}
+	info := rpcLogInfoFromBody(body, "")
 
 	peek, err := peekJSONRPC(body)
 	if err != nil {
+		detail := rpcLogDetail(info, "streamhttp")
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.request_failed", workspace, c.Request().Header.Get(headerMcpSessionID), "Failed to parse MCP request", err.Error(), detail)
 		return writeJSONRPCError(c, http.StatusBadRequest, nil, -32700, "parse error", err.Error())
 	}
 
@@ -119,6 +124,8 @@ func (h *Handler) streamHTTPHandlePost(c echo.Context, xl xlog.Logger, workspace
 	}
 
 	if sessionID == "" {
+		detail := rpcLogDetail(info, "streamhttp")
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.request_failed", workspace, "", "MCP request rejected", fmt.Sprintf("missing %s header", headerMcpSessionID), detail)
 		return writeJSONRPCError(c, http.StatusBadRequest, peek.ID, -32600, fmt.Sprintf("missing %s header", headerMcpSessionID), nil)
 	}
 
@@ -128,26 +135,35 @@ func (h *Handler) streamHTTPHandlePost(c echo.Context, xl xlog.Logger, workspace
 	})
 	if !ok {
 		// 404 会驱动客户端重新 initialize，对齐官方 client 行为
+		detail := rpcLogDetail(info, "streamhttp")
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.request_failed", workspace, sessionID, "MCP request rejected", "session not found", detail)
 		return c.String(http.StatusNotFound, "session not found")
 	}
 
 	// notifications/initialized 是 client → server 的通知，网关直接 ACK 即可
 	if peek.Method == methodNotificationsInit {
+		detail := rpcLogDetail(info, "streamhttp")
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, info.Action, workspace, sessionID, info.Message, "", detail)
 		return c.NoContent(http.StatusAccepted)
 	}
 
 	// 通知：无 id，异步广播到下游
 	if peek.IsNotification() {
+		principal := gatewayPrincipal(c)
 		go func() {
 			if err := session.SendMessage(xl, body); err != nil {
 				xl.Warnf("send notification %s failed: %v", peek.Method, err)
+				detail := rpcLogDetail(info, "streamhttp")
+				h.appendOperation(context.Background(), principal, oplog.LevelError, info.Action+"_failed", workspace, sessionID, info.Message+" failed", err.Error(), detail)
 			}
 		}()
+		detail := rpcLogDetail(info, "streamhttp")
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, info.Action, workspace, sessionID, info.Message, "", detail)
 		return c.NoContent(http.StatusAccepted)
 	}
 
 	// request：订阅后转发，等待 id 匹配的响应
-	return h.streamHTTPForwardAndWait(c, xl, session, body, peek)
+	return h.streamHTTPForwardAndWait(c, xl, workspace, session, body, peek, info)
 }
 
 // streamHTTPHandleInitialize 处理首次 initialize：创建 session，响应头带 session id，
@@ -155,6 +171,7 @@ func (h *Handler) streamHTTPHandlePost(c echo.Context, xl xlog.Logger, workspace
 func (h *Handler) streamHTTPHandleInitialize(c echo.Context, xl xlog.Logger, workspace string, peek jsonRPCPeek) error {
 	if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
 		xl.Errorf("restore workspace services failed: %v", err)
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.initialize_failed", workspace, "", "session initialize failed", err.Error(), nil)
 		return writeJSONRPCError(c, http.StatusInternalServerError, peek.ID, -32000, "failed to restore workspace services", err.Error())
 	}
 	session, err := h.services.CreateProxySession(xl, workspaces.NameArg{
@@ -162,18 +179,23 @@ func (h *Handler) streamHTTPHandleInitialize(c echo.Context, xl xlog.Logger, wor
 	})
 	if err != nil {
 		xl.Errorf("create session failed: %v", err)
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.initialize_failed", workspace, "", "session initialize failed", err.Error(), nil)
 		return writeJSONRPCError(c, http.StatusInternalServerError, peek.ID, -32000, "failed to create session", err.Error())
 	}
 
 	c.Response().Header().Set(headerMcpSessionID, session.Id)
+	detail := rpcLogDetail(rpcLogInfo{Method: peek.Method, RequestID: rawIDString(peek.ID), Action: "session.initialize", Message: "MCP session initialized"}, "streamhttp")
+	h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, "session.initialize", workspace, session.Id, "MCP session initialized", "", detail)
 	return writeJSONRPCResult(c, peek.ID, buildGatewayInitializeResult(session))
 }
 
 // streamHTTPForwardAndWait 在订阅 session 事件通道的前提下转发请求，并同步等待
 // 匹配 id 的响应消息。
-func (h *Handler) streamHTTPForwardAndWait(c echo.Context, xl xlog.Logger, session *sessions.Session, body []byte, peek jsonRPCPeek) error {
+func (h *Handler) streamHTTPForwardAndWait(c echo.Context, xl xlog.Logger, workspace string, session *sessions.Session, body []byte, peek jsonRPCPeek, info rpcLogInfo) error {
 	eventChan, closer := session.GetEventChanWithCloser()
 	defer closer()
+	started := time.Now()
+	detail := rpcLogDetail(info, "streamhttp")
 
 	sendErrCh := make(chan error, 1)
 	go func() {
@@ -189,9 +211,14 @@ func (h *Handler) streamHTTPForwardAndWait(c echo.Context, xl xlog.Logger, sessi
 	for {
 		select {
 		case <-ctx.Done():
+			if !started.IsZero() {
+				detail["duration_ms"] = time.Since(started).Milliseconds()
+			}
 			if sendErr != nil {
+				h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, info.Action+"_failed", workspace, session.GetId(), info.Message+" failed", sendErr.Error(), detail)
 				return writeJSONRPCError(c, http.StatusBadGateway, peek.ID, -32000, "forward failed", sendErr.Error())
 			}
+			h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, info.Action+"_timeout", workspace, session.GetId(), info.Message+" timeout", "", detail)
 			return writeJSONRPCError(c, http.StatusGatewayTimeout, peek.ID, -32000, "timeout waiting for downstream response", nil)
 		case err := <-sendErrCh:
 			sendErr = err
@@ -201,9 +228,14 @@ func (h *Handler) streamHTTPForwardAndWait(c echo.Context, xl xlog.Logger, sessi
 			}
 		case evt, ok := <-eventChan:
 			if !ok {
+				if !started.IsZero() {
+					detail["duration_ms"] = time.Since(started).Milliseconds()
+				}
 				if sendDone && sendErr != nil {
+					h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, info.Action+"_failed", workspace, session.GetId(), info.Message+" failed", sendErr.Error(), detail)
 					return writeJSONRPCError(c, http.StatusBadGateway, peek.ID, -32000, "forward failed", sendErr.Error())
 				}
+				h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, info.Action+"_failed", workspace, session.GetId(), info.Message+" failed", "session closed before response", detail)
 				return writeJSONRPCError(c, http.StatusInternalServerError, peek.ID, -32000, "session closed before response", nil)
 			}
 			if evt.Event != "" && evt.Event != "message" {
@@ -214,6 +246,14 @@ func (h *Handler) streamHTTPForwardAndWait(c echo.Context, xl xlog.Logger, sessi
 			}
 			c.Response().Header().Set("Content-Type", "application/json")
 			c.Response().WriteHeader(http.StatusOK)
+			level, errText := finishRPCLogDetail(detail, started, evt.Data)
+			action := info.Action
+			message := info.Message
+			if level == oplog.LevelError {
+				action += "_failed"
+				message += " failed"
+			}
+			h.appendOperation(c.Request().Context(), gatewayPrincipal(c), level, action, workspace, session.GetId(), message, errText, detail)
 			_, err := c.Response().Write([]byte(evt.Data))
 			return err
 		}
@@ -228,6 +268,7 @@ func (h *Handler) streamHTTPEventStream(c echo.Context, xl xlog.Logger, workspac
 		sessionID = c.QueryParam("sessionId")
 	}
 	if sessionID == "" {
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.stream_failed", workspace, "", "session stream failed", fmt.Sprintf("missing %s header", headerMcpSessionID), nil)
 		return c.String(http.StatusBadRequest, fmt.Sprintf("missing %s header", headerMcpSessionID))
 	}
 
@@ -236,8 +277,10 @@ func (h *Handler) streamHTTPEventStream(c echo.Context, xl xlog.Logger, workspac
 		Session:   sessionID,
 	})
 	if !ok {
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.stream_failed", workspace, sessionID, "session stream failed", "session not found", nil)
 		return c.String(http.StatusNotFound, "session not found")
 	}
+	h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, "session.connect", workspace, sessionID, "Streamable HTTP session connected", "", map[string]interface{}{"transport": "streamhttp", "connection": "event-stream"})
 
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
@@ -291,12 +334,14 @@ func (h *Handler) streamHTTPEventStream(c echo.Context, xl xlog.Logger, workspac
 func (h *Handler) streamHTTPHandleDelete(c echo.Context, xl xlog.Logger, workspace string) error {
 	sessionID := c.Request().Header.Get(headerMcpSessionID)
 	if sessionID == "" {
+		h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelError, "session.delete_failed", workspace, "", "session delete failed", fmt.Sprintf("missing %s header", headerMcpSessionID), nil)
 		return c.String(http.StatusBadRequest, fmt.Sprintf("missing %s header", headerMcpSessionID))
 	}
 	h.services.CloseProxySession(xl, workspaces.NameArg{
 		Workspace: workspace,
 		Session:   sessionID,
 	})
+	h.appendOperation(c.Request().Context(), gatewayPrincipal(c), oplog.LevelInfo, "session.delete", workspace, sessionID, "MCP session deleted", "", map[string]interface{}{"transport": "streamhttp"})
 	return c.NoContent(http.StatusOK)
 }
 

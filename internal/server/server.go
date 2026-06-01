@@ -12,7 +12,9 @@ import (
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/gateway"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/oplog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/persistence"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/runtime"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
 )
@@ -22,6 +24,7 @@ import (
 type Server struct {
 	services workspaces.ServiceManagerI
 	auth     *identity.Service
+	opLogDB  interface{ Close(context.Context) error }
 }
 
 // New 构造并返回一个 Server 实例，同时在给定的 Echo 上注册：
@@ -49,8 +52,13 @@ func New(cfg config.Config, e *echo.Echo) *Server {
 	if err := authSvc.Bootstrap(context.Background()); err != nil {
 		panic(err)
 	}
+	operationLogs, opLogCloser, err := openOperationLogStore(context.Background(), cfg)
+	if err != nil {
+		panic(err)
+	}
+	xlog.RegisterSink(oplog.NewXLogSink(operationLogs))
 
-	adminH := admin.NewHandler(services, &cfg, authSvc)
+	adminH := admin.NewHandler(services, &cfg, authSvc, operationLogs)
 	gatewayH := gateway.NewHandler(services, &cfg, authSvc)
 
 	// 先注册精确匹配的路由
@@ -72,7 +80,7 @@ func New(cfg config.Config, e *echo.Echo) *Server {
 		})
 	}
 
-	return &Server{services: services, auth: authSvc}
+	return &Server{services: services, auth: authSvc, opLogDB: opLogCloser}
 }
 
 // Close 优雅关闭底层 service manager（会关闭所有 workspaces 及其 MCP 服务）。
@@ -81,4 +89,23 @@ func (s *Server) Close() {
 	if s.auth != nil {
 		_ = s.auth.Close(context.Background())
 	}
+	if s.opLogDB != nil {
+		_ = s.opLogDB.Close(context.Background())
+	}
+}
+
+func openOperationLogStore(ctx context.Context, cfg config.Config) (oplog.Store, interface{ Close(context.Context) error }, error) {
+	cfg.Default()
+	if cfg.OperationLog != nil && cfg.OperationLog.Storage == "mongo" {
+		store, err := oplog.OpenMongoStore(ctx, cfg.OperationLog.MongoURI, cfg.OperationLog.MongoDatabase, cfg.OperationLog.MongoCollection)
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, store, nil
+	}
+	store, err := oplog.NewFileRecorder(cfg.WorkspacePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, nil, nil
 }

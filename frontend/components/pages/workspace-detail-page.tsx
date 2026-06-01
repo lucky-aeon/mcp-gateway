@@ -51,12 +51,70 @@ interface WorkspaceDetailPageProps {
 }
 
 function formatDateTime(dateString: string) {
-  return new Date(dateString).toLocaleString('zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  const date = new Date(dateString)
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`
+}
+
+function logDetailText(log: LogEntry) {
+  const metadata = log.metadata || {}
+  const error = metadata.error
+  if (typeof error === 'string' && error) return error
+  return ''
+}
+
+function metadataValue(log: LogEntry, key: string) {
+  const value = log.metadata?.[key]
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  const detail = log.metadata?.detail
+  if (detail && typeof detail === 'object') {
+    const nested = (detail as Record<string, unknown>)[key]
+    if (typeof nested === 'string' || typeof nested === 'number') return String(nested)
+  }
+  return ''
+}
+
+function compactID(id?: string) {
+  if (!id) return ''
+  return id.length > 12 ? `${id.slice(0, 8)}...${id.slice(-4)}` : id
+}
+
+function logField(log: LogEntry, key: keyof LogEntry | string) {
+  const direct = log[key as keyof LogEntry]
+  if (typeof direct === 'string' || typeof direct === 'number') return String(direct)
+  return metadataValue(log, key)
+}
+
+function logKindLabel(log: LogEntry) {
+  const kind = logField(log, 'kind')
+  if (kind === 'tool') return 'Tool'
+  if (kind === 'session') return 'Session'
+  if (kind === 'mcp') return 'MCP'
+  if (kind === 'workspace') return 'Workspace'
+  if (kind === 'market') return 'Market'
+  if (kind === 'api_key') return 'API Key'
+  return log.source || 'System'
+}
+
+function logTitle(log: LogEntry) {
+  const action = logField(log, 'action')
+  const method = logField(log, 'method')
+  const tool = logField(log, 'tool_name')
+  const resource = logField(log, 'resource_id')
+  if (tool) return `Tool call: ${tool}`
+  if (method) return method === 'tools/list' ? 'List tools' : `MCP request: ${method}`
+  if (resource) return `${log.message || action}: ${resource}`
+  return log.message || action || 'Log event'
+}
+
+function logSubline(log: LogEntry) {
+  const parts = [
+    logField(log, 'summary'),
+    logField(log, 'mcp_name') ? `mcp ${logField(log, 'mcp_name')}` : '',
+    logField(log, 'transport'),
+    logField(log, 'duration_ms') ? `${logField(log, 'duration_ms')}ms` : '',
+  ].filter(Boolean)
+  return Array.from(new Set(parts)).join(' · ')
 }
 
 export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
@@ -738,7 +796,7 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold">操作日志</h2>
-              <p className="text-sm text-muted-foreground">聚合当前工作空间下各服务日志</p>
+              <p className="text-sm text-muted-foreground">聚合当前工作空间的操作、会话请求和服务日志</p>
             </div>
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
@@ -755,22 +813,41 @@ export function WorkspaceDetailPage({ workspaceId }: WorkspaceDetailPageProps) {
             </div>
           </div>
           <Card>
-            <CardContent className="space-y-2 p-4">
+            <CardContent className="p-0">
               {filteredLogs.map((log, index) => (
-                <div key={`${log.timestamp}-${index}`} className="flex items-start gap-3 rounded-xl border bg-muted/30 p-4">
-                  <div className="mt-0.5">
+                <div key={`${log.timestamp}-${index}`} className="grid gap-3 border-b p-4 last:border-b-0 md:grid-cols-[160px_1fr]">
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={log.level === 'error' ? 'destructive' : 'outline'}>{log.level.toUpperCase()}</Badge>
+                      <span>{logKindLabel(log)}</span>
+                    </div>
+                    <div className="font-mono">{formatDateTime(log.timestamp)}</div>
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5">
                     {log.level === 'info' && <CheckCircle className="h-4 w-4 text-blue-500" />}
                     {log.level === 'warn' && <AlertCircle className="h-4 w-4 text-amber-500" />}
                     {log.level === 'error' && <AlertCircle className="h-4 w-4 text-red-500" />}
                     {log.level === 'debug' && <Clock className="h-4 w-4 text-slate-500" />}
-                  </div>
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Badge variant="outline">{log.level.toUpperCase()}</Badge>
-                      <span>{log.source || 'system'}</span>
-                      <span>{formatDateTime(log.timestamp)}</span>
                     </div>
-                    <p className="text-sm">{log.message}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{logTitle(log)}</div>
+                        {logSubline(log) && <div className="mt-1 truncate text-xs text-muted-foreground">{logSubline(log)}</div>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                      {logField(log, 'session_id') && <Badge variant="outline" className="font-mono">sid {compactID(logField(log, 'session_id'))}</Badge>}
+                      {logField(log, 'request_id') && <Badge variant="outline" className="font-mono">id {logField(log, 'request_id')}</Badge>}
+                      {logField(log, 'method') && <Badge variant="secondary">{logField(log, 'method')}</Badge>}
+                      {logField(log, 'tool_name') && <Badge variant="secondary">{logField(log, 'tool_name')}</Badge>}
+                      {logField(log, 'resource_id') && !logField(log, 'session_id') && <Badge variant="outline">{logField(log, 'resource_type') || 'resource'} {logField(log, 'resource_id')}</Badge>}
+                    </div>
+                    {logDetailText(log) && (
+                      <pre className="max-h-40 overflow-auto rounded-md border bg-background p-3 text-xs text-destructive">
+                        {logDetailText(log)}
+                      </pre>
+                    )}
                   </div>
                 </div>
               ))}

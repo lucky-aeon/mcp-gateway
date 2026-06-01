@@ -19,6 +19,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/oplog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/runtime"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/sessions"
@@ -224,10 +225,85 @@ func (h *Handler) visibleWorkspaceMap(c echo.Context) (map[string]bool, error) {
 }
 
 func (h *Handler) appendAudit(c echo.Context, action, resourceType, resourceID, workspaceID string, detail map[string]interface{}) {
+	principal := h.currentPrincipal(c)
 	if h.auth == nil {
+		h.appendOperation(c.Request().Context(), principal, oplog.LevelInfo, action, resourceType, resourceID, workspaceID, "", readableOperationMessage(action, resourceID), "", detail)
 		return
 	}
-	h.auth.AppendAuditLog(c.Request().Context(), h.currentPrincipal(c), action, resourceType, resourceID, workspaceID, detail)
+	h.auth.AppendAuditLog(c.Request().Context(), principal, action, resourceType, resourceID, workspaceID, detail)
+	h.appendOperation(c.Request().Context(), principal, oplog.LevelInfo, action, resourceType, resourceID, workspaceID, "", readableOperationMessage(action, resourceID), "", detail)
+}
+
+func (h *Handler) appendOperation(ctx context.Context, principal *identity.Principal, level oplog.Level, action, resourceType, resourceID, workspaceID, sessionID, message, errText string, detail map[string]interface{}) {
+	actorID := ""
+	if principal != nil {
+		actorID = principal.AccountID
+	}
+	fields := map[string]interface{}{
+		"log_type":      "operation",
+		"event_id":      uuid.NewString(),
+		"action":        action,
+		"workspace_id":  workspaceID,
+		"session_id":    sessionID,
+		"resource_type": resourceType,
+		"resource_id":   resourceID,
+		"actor_id":      actorID,
+	}
+	for k, v := range detail {
+		fields[k] = v
+	}
+	if errText != "" {
+		fields["error"] = errText
+	}
+	logger := xlog.NewLogger("control-plane").WithFields(fields)
+	if level == oplog.LevelError {
+		logger.Error(message)
+		return
+	}
+	if level == oplog.LevelWarn {
+		logger.Warn(message)
+		return
+	}
+	if level == oplog.LevelDebug {
+		logger.Debug(message)
+		return
+	}
+	logger.Info(message)
+	_ = ctx
+}
+
+func readableOperationMessage(action, resourceID string) string {
+	names := map[string]string{
+		"workspace.create":              "Workspace created",
+		"workspace.update":              "Workspace updated",
+		"workspace.delete":              "Workspace deleted",
+		"service.create":                "MCP service created",
+		"service.create_from_installed": "MCP service added from installed package",
+		"service.update":                "MCP service updated",
+		"service.delete":                "MCP service deleted",
+		"service.start":                 "MCP service started",
+		"service.stop":                  "MCP service stopped",
+		"service.restart":               "MCP service restarted",
+		"session.create":                "MCP session created",
+		"session.delete":                "MCP session deleted",
+		"api_key.create":                "API key created",
+		"api_key.revoke":                "API key revoked",
+		"workspace_member.add":          "Workspace member added",
+		"market.install":                "Market package installed",
+		"installed.update":              "Installed package updated",
+		"installed.delete":              "Installed package deleted",
+		"installed.oauth_complete":      "Installed package OAuth completed",
+		"auth.login":                    "User logged in",
+		"auth.register":                 "User registered",
+	}
+	msg, ok := names[action]
+	if !ok {
+		msg = action
+	}
+	if resourceID != "" {
+		return msg + ": " + resourceID
+	}
+	return msg
 }
 
 func respondOK(c echo.Context, data interface{}) error {
@@ -1151,11 +1227,13 @@ func (h *Handler) handleV1StartService(c echo.Context) error {
 		var ok bool
 		cfg, ok = cfgs[name]
 		if !ok {
+			h.appendOperation(c.Request().Context(), h.currentPrincipal(c), oplog.LevelError, "service.start_failed", "service", name, wsID, "", "service start failed", "service not found", nil)
 			return respondError(c, http.StatusNotFound, "NOT_FOUND", "service not found", nil)
 		}
 	}
 
 	if _, err := h.DeployServer(name, cfg); err != nil {
+		h.appendOperation(c.Request().Context(), h.currentPrincipal(c), oplog.LevelError, "service.start_failed", "service", name, wsID, "", "service start failed", err.Error(), nil)
 		return respondError(c, http.StatusInternalServerError, "MCP_DEPLOY_FAILED", err.Error(), nil)
 	}
 	h.markStoredServiceDesiredStatus(c.Request().Context(), wsID, name, serviceDesiredStatusRunning)
@@ -1180,6 +1258,7 @@ func (h *Handler) handleV1StartService(c echo.Context) error {
 		}
 	}
 
+	h.appendAudit(c, "service.start", "service", name, wsID, nil)
 	return respondOK(c, map[string]string{"status": "running"})
 }
 
@@ -1189,6 +1268,7 @@ func (h *Handler) handleV1StopService(c echo.Context) error {
 	}
 	h.services.StopServer(nilLogger{}, workspaces.NameArg{Workspace: c.Param("ws"), Server: c.Param("name")})
 	h.markStoredServiceDesiredStatus(c.Request().Context(), c.Param("ws"), c.Param("name"), serviceDesiredStatusStopped)
+	h.appendAudit(c, "service.stop", "service", c.Param("name"), c.Param("ws"), nil)
 	return respondOK(c, map[string]string{"status": "stopped"})
 }
 
@@ -1197,8 +1277,10 @@ func (h *Handler) handleV1RestartService(c echo.Context) error {
 		return err
 	}
 	if err := h.services.RestartServer(nilLogger{}, workspaces.NameArg{Workspace: c.Param("ws"), Server: c.Param("name")}); err != nil {
+		h.appendOperation(c.Request().Context(), h.currentPrincipal(c), oplog.LevelError, "service.restart_failed", "service", c.Param("name"), c.Param("ws"), "", "service restart failed", err.Error(), nil)
 		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 	}
+	h.appendAudit(c, "service.restart", "service", c.Param("name"), c.Param("ws"), nil)
 	return respondOK(c, map[string]string{"status": "running"})
 }
 
@@ -1288,10 +1370,12 @@ func (h *Handler) handleV1CreateSession(c echo.Context) error {
 		return err
 	}
 	if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), wsID, nilLogger{}); err != nil {
+		h.appendOperation(c.Request().Context(), h.currentPrincipal(c), oplog.LevelError, "session.create_failed", "session", "", wsID, "", "session create failed", err.Error(), nil)
 		return respondError(c, http.StatusInternalServerError, "MCP_DEPLOY_FAILED", err.Error(), nil)
 	}
 	sess, err := h.services.CreateProxySession(nilLogger{}, workspaces.NameArg{Workspace: wsID})
 	if err != nil {
+		h.appendOperation(c.Request().Context(), h.currentPrincipal(c), oplog.LevelError, "session.create_failed", "session", "", wsID, "", "session create failed", err.Error(), nil)
 		return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 	}
 	h.state.appendActivity(activityItem{
@@ -1319,6 +1403,7 @@ func (h *Handler) handleV1DeleteSession(c echo.Context) error {
 		return err
 	}
 	h.services.CloseProxySession(nilLogger{}, workspaces.NameArg{Workspace: c.Param("ws"), Session: c.Param("id")})
+	h.appendAudit(c, "session.delete", "session", c.Param("id"), c.Param("ws"), nil)
 	return respondOK(c, map[string]string{"id": c.Param("id")})
 }
 
@@ -1992,6 +2077,52 @@ func (h *Handler) handleV1WorkspaceLogs(c echo.Context) error {
 	}
 	services := h.listServiceNames(wsID)
 	merged := make([]map[string]interface{}, 0)
+	if h.oplog != nil {
+		operationLogs, err := h.oplog.List(c.Request().Context(), oplog.Query{WorkspaceID: wsID, Limit: tail})
+		if err != nil {
+			return respondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		}
+		for _, event := range operationLogs {
+			detail := event.Detail
+			if detail == nil {
+				detail = map[string]interface{}{}
+			}
+			row := map[string]interface{}{
+				"timestamp":     event.Timestamp.Format(time.RFC3339Nano),
+				"level":         string(event.Level),
+				"message":       event.Message,
+				"source":        event.Source,
+				"kind":          logKind(event.Action),
+				"summary":       logSummary(event, detail),
+				"action":        event.Action,
+				"resource_type": event.ResourceType,
+				"resource_id":   event.ResourceID,
+				"workspace_id":  event.WorkspaceID,
+				"session_id":    event.SessionID,
+				"actor_id":      event.ActorID,
+				"method":        detail["method"],
+				"request_id":    detail["request_id"],
+				"tool_name":     detail["tool_name"],
+				"mcp_name":      detail["mcp_name"],
+				"transport":     detail["transport"],
+				"duration_ms":   detail["duration_ms"],
+				"metadata": map[string]interface{}{
+					"id":            event.ID,
+					"action":        event.Action,
+					"resource_type": event.ResourceType,
+					"resource_id":   event.ResourceID,
+					"workspace_id":  event.WorkspaceID,
+					"session_id":    event.SessionID,
+					"actor_id":      event.ActorID,
+					"detail":        detail,
+				},
+			}
+			if event.Error != "" {
+				row["metadata"].(map[string]interface{})["error"] = event.Error
+			}
+			merged = append(merged, row)
+		}
+	}
 	for _, name := range services {
 		lines, err := h.readServiceLogs(wsID, name, tail)
 		if err != nil {
@@ -2002,14 +2133,61 @@ func (h *Handler) handleV1WorkspaceLogs(c echo.Context) error {
 			merged = append(merged, line)
 		}
 	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return logRowTime(merged[i]).After(logRowTime(merged[j]))
+	})
 	if len(merged) > tail {
-		merged = merged[len(merged)-tail:]
+		merged = merged[:tail]
 	}
 	return respondOK(c, map[string]interface{}{
 		"workspace_id": wsID,
 		"total_lines":  len(merged),
 		"logs":         merged,
 	})
+}
+
+func logKind(action string) string {
+	switch {
+	case strings.HasPrefix(action, "tool."):
+		return "tool"
+	case strings.HasPrefix(action, "session."):
+		return "session"
+	case strings.HasPrefix(action, "service."):
+		return "mcp"
+	case strings.HasPrefix(action, "workspace."):
+		return "workspace"
+	case strings.HasPrefix(action, "api_key."):
+		return "api_key"
+	case strings.HasPrefix(action, "market.") || strings.HasPrefix(action, "installed."):
+		return "market"
+	default:
+		return "operation"
+	}
+}
+
+func logSummary(event oplog.Event, detail map[string]interface{}) string {
+	if tool, _ := detail["tool_name"].(string); tool != "" {
+		if mcpName, _ := detail["mcp_name"].(string); mcpName != "" {
+			return fmt.Sprintf("%s -> %s", tool, mcpName)
+		}
+		return tool
+	}
+	if method, _ := detail["method"].(string); method != "" {
+		return method
+	}
+	if event.ResourceID != "" {
+		return event.ResourceID
+	}
+	return event.Action
+}
+
+func logRowTime(row map[string]interface{}) time.Time {
+	raw, _ := row["timestamp"].(string)
+	ts, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return ts
 }
 
 func (h *Handler) handleV1SystemConfig(c echo.Context) error {

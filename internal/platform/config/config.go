@@ -14,6 +14,7 @@ type Config struct {
 	WorkspacePath       string        // 工作区路径：程序所有产出数据所在目录（日志、mcp_servers.json 等），默认 ./vm
 	Bind                string        // 绑定地址 // [::]:8080
 	Auth                *AuthConfig   // 认证配置
+	OperationLog        *OpLogConfig  // 操作日志持久化配置
 	SessionGCInterval   time.Duration // Session GC间隔
 	ProxySessionTimeout time.Duration // Proxy Session 超时时间
 	McpServiceMgrConfig McpServiceMgrConfig
@@ -91,6 +92,15 @@ func (c *Config) Default() {
 	if c.Auth.AdminDisplayName == "" {
 		c.Auth.AdminDisplayName = "Gateway Admin"
 	}
+	if c.OperationLog == nil {
+		c.OperationLog = &OpLogConfig{
+			Storage:         "file",
+			MongoURI:        "mongodb://127.0.0.1:27017",
+			MongoDatabase:   "mcp_gateway_logs",
+			MongoCollection: "operation_logs",
+		}
+	}
+	c.OperationLog.Default()
 	if c.SessionGCInterval == 0 {
 		c.SessionGCInterval = 10 * time.Second
 	}
@@ -179,6 +189,32 @@ type AuthConfig struct {
 	AdminEmail               string
 	AdminPassword            string
 	AdminDisplayName         string
+}
+
+type OpLogConfig struct {
+	Storage         string
+	MongoURI        string
+	MongoDatabase   string
+	MongoCollection string
+}
+
+func (c *OpLogConfig) Default() {
+	if c.Storage == "" {
+		c.Storage = "file"
+	}
+	c.Storage = strings.ToLower(strings.TrimSpace(c.Storage))
+	if c.Storage != "file" && c.Storage != "mongo" {
+		c.Storage = "file"
+	}
+	if c.MongoURI == "" {
+		c.MongoURI = "mongodb://127.0.0.1:27017"
+	}
+	if c.MongoDatabase == "" {
+		c.MongoDatabase = "mcp_gateway_logs"
+	}
+	if c.MongoCollection == "" {
+		c.MongoCollection = "operation_logs"
+	}
 }
 
 func (c *AuthConfig) IsEnabled() bool {

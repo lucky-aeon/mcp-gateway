@@ -15,6 +15,12 @@
     "AdminPassword": "admin123456",
     "AdminDisplayName": "Gateway Admin"
   },
+  "OperationLog": {
+    "Storage": "file",
+    "MongoURI": "mongodb://127.0.0.1:27017",
+    "MongoDatabase": "mcp_gateway_logs",
+    "MongoCollection": "operation_logs"
+  },
   "SessionGCInterval": 300000000000,
   "ProxySessionTimeout": 1500000000000,
   "McpServiceMgrConfig": {
